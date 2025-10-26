@@ -1,0 +1,59 @@
+{
+  "name": "stateful-observable",
+  "version": "0.0.1",
+  "description": "Stateful wrapper for observables",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "tsup": "rm -rf dist && tsup",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "prettier": "prettier --log-level warn --write \"src/**/*.ts\"",
+    "eslint": "eslint --fix",
+    "bump": "npm version patch && git push && git push --tags"
+  },
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      },
+      "default": "./dist/index.mjs"
+    },
+    "./dist/*": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.mjs",
+      "require": "./dist/*.cjs"
+    }
+  },
+  "dependencies": {
+    "rxjs": "^7.5.5",
+    "tslib": "^2.5.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@typescript-eslint/eslint-plugin": "^8.29.1",
+    "@typescript-eslint/parser": "^8.29.1",
+    "prettier": "^3.3.3",
+    "ts-jest": "^29.4.5",
+    "tsup": "^8.5.0",
+    "typescript": "^5.3.3"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "setupFilesAfterEnv": [
+      "<rootDir>/setupJest.ts"
+    ]
+  },
+  "author": "earthdmitriy",
+  "license": "ISC"
+}
