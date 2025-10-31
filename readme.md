@@ -1,6 +1,6 @@
 # Stateful Observable
 
-A TypeScript library that provides a stateful wrapper for RxJS observables, making it easier to handle loading states, errors, and data in a consistent way.
+A TypeScript library that provides a stateful wrapper for RxJS observables, making it easier to handle loading state, errors, and datastream in a consistent way.
 
 ## Installation
 
@@ -11,6 +11,7 @@ npm install stateful-observable
 ## Key Features
 
 - Wraps RxJS observables with loading, error, and success states
+- Provides true reactivity - works with ifinite amount of event projecting them correctly into 'value', 'pending' and 'error' streams
 - Provides type-safe error handling
 - Supports value and error transformation through piping
 - Implements caching and replay functionality
@@ -22,28 +23,31 @@ npm install stateful-observable
 import { statefulObservable } from 'stateful-observable';
 
 // Create a basic stateful observable
-const store = statefulObservable({
+const datastream = statefulObservable({
   input: new BehaviorSubject(1)
 });
 
 // Transform values with pipeValue
-const transformedStore = store.pipeValue(
+const transformedData = datastream.pipeValue(
   map(value => value * 2)
 );
 
 // Handle errors
-store.error.subscribe(error => {
+datastream.error$.subscribe(error => {
   console.error('An error occurred:', error);
 });
 
 // Track loading state
-store.pending.subscribe(isLoading => {
+datastream.pending$.subscribe(isLoading => {
   console.log('Loading:', isLoading);
 });
 
 // Manually trigger reload
-store.reload();
+datastream.reload();
 ```
+
+## More recipes
+See https://github.com/earthdmitriy/stateful-observable/blob/main/docs/recipes.md 
 
 ## API Reference
 
@@ -61,14 +65,14 @@ Creates a new stateful observable wrapper.
 
 Returns a `StatefulObservable` object with the following properties:
 
-- `raw`: The raw observable containing all states (loading, error, success)
-- `value`: Observable that emits only successful values
-- `error`: Observable that emits only error states
-- `pending`: Observable that emits boolean loading states
+- `raw$`: The raw observable containing all states (loading, error, success)
+- `value$`: Observable that emits only successful values
+- `error$`: Observable that emits only error states
+- `pending$`: Observable that emits boolean loading states
 - `reload`: Function to trigger a manual reload
-- `pipe()`: Method to apply operators to the raw observable
-- `pipeValue()`: Method to transform successful values
-- `pipeError()`: Method to transform error states
+- `pipe(...)`: Method to apply operators to the raw observable
+- `pipeValue(...)`: Method to transform successful values
+- `pipeError(...)`: Method to transform error states
 
 ## Error Handling
 
@@ -76,17 +80,15 @@ The library provides comprehensive error handling through the `ResponseError` ty
 
 ```typescript
 // Handle errors with pipeError
-const store = statefulObservable({
+const datastream = statefulObservable({
   input: source$
 }).pipeError(
   map(error => `Processed error: ${error}`)
 );
 
 // Access error states
-store.error.subscribe(error => {
-  if (error) {
-    // Handle error
-  }
+datastream.error.subscribe(error => {
+  // Handle error
 });
 ```
 
@@ -100,7 +102,7 @@ Combines multiple stateful observables into a single one.
 ```typescript
 const combined = combineStatefulObservables(
   // tuple
-  [store1, store2], // [StatefulObservable<T1,E1>,StatefulObservable<T2,E2>]
+  [datastream1, datastream2], // [StatefulObservable<T1,E1>,StatefulObservable<T2,E2>]
   // types are being inherited from sources
   // [T1, T2]
   ([value1, value2]) => ({ value1, value2 })
@@ -109,7 +111,7 @@ const combined = combineStatefulObservables(
 It aware of error type
 ```typescript
 const combined = combineStatefulObservables(
-  [store1, store2], // [StatefulObservable<T1,E1>,StatefulObservable<T2,E2>]
+  [datastream1, datastream2], // [StatefulObservable<T1,E1>,StatefulObservable<T2,E2>]
 ).pipeError(
   // type is inherited from source tuple
   // [E1 | false, E2 | false]
@@ -121,6 +123,7 @@ const combined = combineStatefulObservables(
 
 ```typescript
 class UserService {
+  // mimic formValue
   private userInput = new BehaviorSubject<number>(1);
   
   users = statefulObservable({
@@ -145,7 +148,7 @@ class UserService {
 
 ### Response Types
 
-Heart of StatefulObservable is 'raw' data stream.
+Heart of StatefulObservable is 'raw' datastream.
 ```typescript
 type ResponseLoading = {
   state: typeof loadingSymbol;
@@ -181,15 +184,15 @@ const pending = raw.pipe(map(isLoading));
 
 Angular template for example
 ```html
-  <div [class.loading]="statefulObservable.pending | async">
-    @if (clientStore.error | async; as error) {
+  <div [class.loading]="statefulObservable.pending$ | async">
+    @if (clientData.error$ | async; as error) {
       <app-generic-error
         [error]="error"
         (reload)="statefulObservable.reload()"
       ></app-generic-error>
     } @else {
       <app-client-info
-        [displayData]="statefulObservable.value | async"
+        [displayData]="statefulObservable.value$ | async"
       ></app-client-info>
     }
   </div>
@@ -199,30 +202,37 @@ And, where magic happens. As you remember only last value being cached in raw st
 
 Let's imagine it 'loading' event.
 Template will get:
-Loading: true
-Value: empty
-Error: empty
+ - Loading: true
+ - Value: empty
+ - Error: empty
 Only spinner or skeleton will be shown.
 
 What if it contain 'value' event?
 Template will get:
-Loading: false
-Value: data
-Error: empty
+ - Loading: false
+ - Value: data
+ - Error: empty
 Template will render data.
 
 What's with 'error' event?
 Template will get:
-Loading: false
-Value: empty
-Error: error
+ - Loading: false
+ - Value: empty
+ - Error: error
 Template will render error.
 
 Therefore any subsriber at any time will get correct value.
 
 Moreover - in case of reload we'll get new `true` in 'loading' stream.
-And data (or error) will be kept intact until new data (or error) event appear.
+And datastream (or error) will be kept intact until new datastream (or error) event appear.
 It will prevent unnecessary layout shift.
+
+## Why [XXX] / I want [YYY]?
+Check Architecture Decision Records https://github.com/earthdmitriy/stateful-observable/blob/main/docs/adr.md 
+You might find answers here.
+
+Or create new issue https://github.com/earthdmitriy/stateful-observable/issues
+
 
 ## License
 
