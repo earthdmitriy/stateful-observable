@@ -11,7 +11,7 @@ npm install @rx-evo/stateful-observable
 ## Key Features
 
 - Wraps RxJS observables with loading, error, and success states
-- Provides true reactivity - works with ifinite amount of event projecting them correctly into 'value', 'pending' and 'error' streams
+- Provides true reactivity - works with ifinite amount of events projecting them correctly into 'value', 'pending' and 'error' streams
 - Provides type-safe error handling
 - Supports value and error transformation through piping
 - Enables easy combination of multiple stateful observables
