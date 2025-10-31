@@ -1,5 +1,5 @@
 {
-  "name": "stateful-observable",
+  "name": "@rx-evo/stateful-observable",
   "version": "0.0.1",
   "description": "Stateful wrapper for observables",
   "main": "dist/index.js",
@@ -8,6 +8,10 @@
     "dist",
     "README.md"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/earthdmitriy/stateful-observable"
+  },
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json",
     "tsup": "rm -rf dist && tsup",

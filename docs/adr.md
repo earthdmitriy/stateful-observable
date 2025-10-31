@@ -271,3 +271,17 @@ Pros:
 
 Cons:
 - Is this a common use case?
+
+## More shorthands
+
+```typescript
+const data = stream.pipeError(map(processError));
+// shorthand version
+const data = stream.mapError(processError);
+```
+
+```typescript
+const data = stream.pipeValue(map(processValue));
+// shorthand version
+const data = stream.mapValue(processValue);
+```

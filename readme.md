@@ -5,7 +5,7 @@ A TypeScript library that provides a stateful wrapper for RxJS observables, maki
 ## Installation
 
 ```bash
-npm install stateful-observable
+npm install @rx-evo/stateful-observable
 ```
 
 ## Key Features
@@ -14,13 +14,14 @@ npm install stateful-observable
 - Provides true reactivity - works with ifinite amount of event projecting them correctly into 'value', 'pending' and 'error' streams
 - Provides type-safe error handling
 - Supports value and error transformation through piping
-- Implements caching and replay functionality
 - Enables easy combination of multiple stateful observables
+- Implements caching and retry functionality
+- Written with functional programming in mind - should help getting rid of mutations in projects
 
 ## Usage
 
 ```typescript
-import { statefulObservable } from 'stateful-observable';
+import { statefulObservable } from '@rx-evo/stateful-observable';
 
 // Create a basic stateful observable
 const datastream = statefulObservable({
