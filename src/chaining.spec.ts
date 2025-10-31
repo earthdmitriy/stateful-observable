@@ -23,7 +23,7 @@ describe("splitResponseWithStatus", () => {
     const streams = splitResponseWithStatus<Result, ErrorType>(source$);
 
     const results: ResponseWithStatus<Result, ErrorType>[] = [];
-    streams.value.subscribe((val) => results.push(val));
+    streams.value$.subscribe((val) => results.push(val));
 
     setTimeout(() => {
       expect(results).toEqual([successResponse]);
@@ -36,7 +36,7 @@ describe("splitResponseWithStatus", () => {
     const streams = splitResponseWithStatus<Result, ErrorType>(source$);
 
     const errors: (ErrorType | false)[] = [];
-    streams.error.subscribe((err) => errors.push(err));
+    streams.error$.subscribe((err) => errors.push(err));
 
     setTimeout(() => {
       expect(errors).toEqual(["error-message"]);
@@ -49,7 +49,7 @@ describe("splitResponseWithStatus", () => {
     const streams = splitResponseWithStatus<Result, ErrorType>(source$);
 
     const pendings: boolean[] = [];
-    streams.pending.subscribe((pending) => pendings.push(pending));
+    streams.pending$.subscribe((pending) => pendings.push(pending));
 
     setTimeout(() => {
       expect(pendings).toEqual([false, false, true]);

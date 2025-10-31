@@ -15,14 +15,14 @@ export type ResponseWithStatus<T, E = unknown> =
   | T;
 
 export type StatefulObservableRaw<T = unknown, Error = unknown> = {
-  raw: Observable<ResponseWithStatus<T, Error>>;
+  raw$: Observable<ResponseWithStatus<T, Error>>;
   reload: () => void;
 };
 
 export type StatefulObservableStreams<T = unknown, Error = unknown> = {
-  value: Observable<T>;
-  error: Observable<false | Error>;
-  pending: Observable<boolean>;
+  value$: Observable<T>;
+  error$: Observable<false | Error>;
+  pending$: Observable<boolean>;
 };
 
 export type StatefulObservableUtils<T = unknown, Error = unknown> = {

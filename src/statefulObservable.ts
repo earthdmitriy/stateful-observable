@@ -39,16 +39,16 @@ export const fillStatefulObservable = <Result, Error>(
   const cachedRaw$ = raw.pipe(defaultCache());
 
   return {
-    raw: cachedRaw$,
+    raw$: cachedRaw$,
 
     reload,
 
-    value: cachedRaw$.pipe(filter(isSuccess)),
-    error: cachedRaw$.pipe(
+    value$: cachedRaw$.pipe(filter(isSuccess)),
+    error$: cachedRaw$.pipe(
       filter(isError),
       map((e) => e.error)
     ),
-    pending: cachedRaw$.pipe(map(isLoading)),
+    pending$: cachedRaw$.pipe(map(isLoading)),
 
     pipe: (...args: Parameters<PipeRawOperator>) =>
       fillStatefulObservable(cachedRaw$.pipe(pipeRaw(...args)), reload),

@@ -1,18 +1,18 @@
 import {
-  filter,
-  map, Observable
+    filter,
+    map, Observable
 } from "rxjs";
 
 import { pipeError, pipeRaw, pipeValue } from "./operators";
 import { isError, isLoading, isSuccess } from "./response-container";
 import { fillStatefulObservable } from "./statefulObservable";
 import {
-  PipeErrorOperator,
-  PipeRawOperator,
-  PipeValueOperator,
-  ResponseWithStatus,
-  StatefulObservableRaw,
-  StatefulObservableStreams,
+    PipeErrorOperator,
+    PipeRawOperator,
+    PipeValueOperator,
+    ResponseWithStatus,
+    StatefulObservableRaw,
+    StatefulObservableStreams,
 } from "./types";
 
 /**
@@ -35,12 +35,12 @@ import {
 export const splitResponseWithStatus = <Result, Error>(
   raw: Observable<ResponseWithStatus<Result, Error>>
 ): StatefulObservableStreams<Result, Error> => ({
-  value: raw.pipe(filter(isSuccess)),
-  error: raw.pipe(
+  value$: raw.pipe(filter(isSuccess)),
+  error$: raw.pipe(
     filter(isError),
     map((e) => e.error)
   ),
-  pending: raw.pipe(map(isLoading)),
+  pending$: raw.pipe(map(isLoading)),
 });
 
 /**
@@ -57,7 +57,7 @@ export const splitResponseWithStatus = <Result, Error>(
  * @returns An object with `pipe`, `pipeValue`, and `pipeError` functions.
  */
 export const getChaining = <Result, Error>({
-  raw,
+  raw$: raw,
   reload,
 }: StatefulObservableRaw<Result, Error>) => ({
   pipe: (...args: Parameters<PipeRawOperator>) =>

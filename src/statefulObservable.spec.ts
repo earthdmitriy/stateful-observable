@@ -48,7 +48,7 @@ describe("statefulObservable", () => {
       input: new BehaviorSubject(1),
     });
 
-    const res = await firstValueFrom(store.value);
+    const res = await firstValueFrom(store.value$);
 
     expect(res).toEqual(1);
   });
@@ -58,7 +58,7 @@ describe("statefulObservable", () => {
       input: new BehaviorSubject(1),
     });
 
-    const res = await firstValueFrom(store.raw.pipe(take(2), toArray()));
+    const res = await firstValueFrom(store.raw$.pipe(take(2), toArray()));
 
     expect(res).toEqual([{ state: loadingSymbol }, 1]);
   });
@@ -67,7 +67,7 @@ describe("statefulObservable", () => {
     const store = statefulObservable({
       input: new BehaviorSubject(1),
     }).pipeValue(map((v) => v + 10));
-    const res = await firstValueFrom(store.value);
+    const res = await firstValueFrom(store.value$);
 
     expect(res).toEqual(11);
   });
@@ -80,7 +80,7 @@ describe("statefulObservable", () => {
       delay(1)
     );
 
-    const res = await firstValueFrom(store.value);
+    const res = await firstValueFrom(store.value$);
 
     expect(res).toEqual(11);
   });
@@ -94,7 +94,7 @@ describe("statefulObservable", () => {
       ),
     });
 
-    const res = await firstValueFrom(store.raw);
+    const res = await firstValueFrom(store.raw$);
 
     expect(res).toEqual({ state: errorSymbol, error: "err" });
   });
@@ -108,7 +108,7 @@ describe("statefulObservable", () => {
       ),
     }).pipeError(map((e) => e + "1"));
 
-    const res = await firstValueFrom(store.raw.pipe(take(1), toArray()));
+    const res = await firstValueFrom(store.raw$.pipe(take(1), toArray()));
 
     console.log(res);
 
@@ -124,7 +124,7 @@ describe("statefulObservable", () => {
       })
     );
 
-    const res = await firstValueFrom(store.raw.pipe(take(2), toArray()));
+    const res = await firstValueFrom(store.raw$.pipe(take(2), toArray()));
 
     expect(res).toEqual([
       { state: loadingSymbol },
@@ -142,7 +142,7 @@ describe("statefulObservable", () => {
       })
     );
 
-    const res = await firstValueFrom(store.raw.pipe(take(2), toArray()));
+    const res = await firstValueFrom(store.raw$.pipe(take(2), toArray()));
 
     expect(res).toEqual([
       { state: loadingSymbol },
@@ -159,7 +159,7 @@ describe("statefulObservable", () => {
       })
     );
 
-    const res = await firstValueFrom(store.error);
+    const res = await firstValueFrom(store.error$);
 
     expect(res).toEqual("err");
   });
@@ -167,12 +167,12 @@ describe("statefulObservable", () => {
   it("dont keep state without subscribers", async () => {
     sampleService.input.next(1);
 
-    const res = await firstValueFrom(sampleService.store.value);
+    const res = await firstValueFrom(sampleService.store.value$);
 
     expect(sampleService.makeRequest.mock.calls.length).toEqual(1);
     expect(res).toEqual(2);
 
-    const res2 = await firstValueFrom(sampleService.store.value);
+    const res2 = await firstValueFrom(sampleService.store.value$);
 
     expect(sampleService.makeRequest.mock.calls.length).toEqual(2);
     expect(res2).toEqual(2);
@@ -187,7 +187,7 @@ describe("statefulObservable", () => {
       ),
     }).pipeError(map(() => "err" as const));
 
-    const res = await firstValueFrom(store.error);
+    const res = await firstValueFrom(store.error$);
 
     expect(res).toEqual("err");
   });
@@ -209,10 +209,10 @@ describe("statefulObservable", () => {
       })
     );
 
-    const res = await firstValueFrom(store.error);
+    const res = await firstValueFrom(store.error$);
     expect(res).toEqual("1");
 
-    const res2 = await firstValueFrom(storeWithErrorHandling.error);
+    const res2 = await firstValueFrom(storeWithErrorHandling.error$);
     expect(res2).toEqual(1);
   });
 
@@ -221,7 +221,7 @@ describe("statefulObservable", () => {
 
     sampleService.input.next(1);
 
-    const pipedRes = await firstValueFrom(piped.value);
+    const pipedRes = await firstValueFrom(piped.value$);
 
     expect(pipedRes).toEqual("piped 2");
   });
@@ -241,7 +241,7 @@ describe("statefulObservable", () => {
 
     sampleService.input.next(1);
 
-    const pipedRes = await firstValueFrom(piped.value);
+    const pipedRes = await firstValueFrom(piped.value$);
 
     expect(pipedRes).toEqual("piped 2");
   });
@@ -258,13 +258,13 @@ describe("statefulObservable", () => {
       .pipe(shareReplay(1));
 
     // first request triggered by subscribing to value
-    const first = await firstValueFrom(store.value);
+    const first = await firstValueFrom(store.value$);
     expect(first).toEqual([1, 1]);
 
     // trigger reload explicitly and expect a new request
     store.reload();
     await new Promise((r) => setTimeout(r, 5)); // wait for async operations
-    const second = await firstValueFrom(store.value);
+    const second = await firstValueFrom(store.value$);
     expect(second).toEqual([1, 2]);
   });
 
@@ -278,7 +278,7 @@ describe("statefulObservable", () => {
     );
 
     const results: ResponseWithStatus<[number, number], unknown>[] = [];
-    store.raw.subscribe((val) => {
+    store.raw$.subscribe((val) => {
       results.push(val);
     });
 
@@ -298,7 +298,7 @@ describe("statefulObservable", () => {
 
   it("pending flips during async operation", async () => {
     // subscribe to pending and collect two emissions: loading then not loading
-    const pendingSeq$ = sampleService.store.pending.pipe(take(2), toArray());
+    const pendingSeq$ = sampleService.store.pending$.pipe(take(2), toArray());
     // trigger a request
     sampleService.input.next(1);
     const pendingSeq = await firstValueFrom(pendingSeq$);

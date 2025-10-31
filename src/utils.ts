@@ -39,7 +39,7 @@ export const combineStatefulObservables = <
   mapCombinedValue: (data: UnwrapStatefulObservables<T>) => Result
 ): StatefulObservable<Result, UnwrapStatefulObservablesError<T>> =>
   fillStatefulObservable(
-    combineLatest(args.map((s) => s.raw)).pipe(
+    combineLatest(args.map((s) => s.raw$)).pipe(
       map((events) => {
         if (events.some((x) => isLoading(x)))
           return { state: loadingSymbol } as ResponseLoading;
