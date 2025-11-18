@@ -11,6 +11,7 @@ import {
   OperatorFunction,
   tap
 } from 'rxjs';
+import { createCache } from './cache';
 import { fillStatefulObservable } from './chaining';
 import {
   catchResponseError, mapToLoading
@@ -30,12 +31,14 @@ export const statefulObservable = <Input, Response = Input>(
     | {
         input: Observable<Input>;
         cacheKey?: (i: Input) => any[];
+        cacheSize?: number;
         loader?: (input: Input) => ObservableInput<Response>;
         mapOperator?: TmapOperator;
       }
     | {
         input?: Observable<Input>;
         cacheKey?: (i: Input) => any[];
+        cacheSize?: number;
         loader: (input: Input) => ObservableInput<Response>;
         mapOperator?: TmapOperator;
       },
@@ -45,10 +48,11 @@ export const statefulObservable = <Input, Response = Input>(
     loader,
     mapOperator = mergeMap,
     cacheKey = () => [], // falsy cache key will skip caching
+    cacheSize = 42
   } = options;
 
   const source$ = input ?? of(true as Input);
-  const cache$ = new BehaviorSubject({} as { [key: string]: Response });
+  const cache$ = new BehaviorSubject(createCache<Response>(cacheSize));
 
   const loading$ = combineLatest([source$, cache$]).pipe(
     mapToLoading(),
@@ -59,20 +63,20 @@ export const statefulObservable = <Input, Response = Input>(
     loader ? loader(input) : of(input as unknown as Response);
 
   const valueOrError$ = combineLatest([source$, cache$]).pipe(
-    map(([input, cacheMap]) => ({
+    map(([input, cache]) => ({
       input,
-      cacheMap,
+      cache,
       key: cacheKey(input).join('|'),
     })),
-    mapOperator(({ input, cacheMap, key }) => {
+    mapOperator(({ input, cache, key }) => {
       if (key) {// skip if no cache key
-        const cache = cacheMap[key];
-        if (cache) return of(cache);
+        const cached = cache.get(key);
+        if (cached) return of(cached);
       }
 
       return from(makeObservableInput(input)).pipe(
         tap({
-          next: (result) => (cacheMap[key] = result),
+          next: (result) => cache.set(key, result),
         }),
         catchResponseError(),
       );
@@ -82,5 +86,5 @@ export const statefulObservable = <Input, Response = Input>(
 
   const raw = merge(loading$, valueOrError$);
 
-  return fillStatefulObservable<Response, unknown>(raw, () => cache$.next({}));
+  return fillStatefulObservable<Response, unknown>(raw, () => cache$.next(createCache<Response>(cacheSize)));
 };

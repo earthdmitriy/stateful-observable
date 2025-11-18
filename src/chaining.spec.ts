@@ -137,8 +137,6 @@ describe('chaining / fillStatefulObservable', () => {
 
       const res = await firstValueFrom(store.raw$.pipe(take(1), toArray()));
 
-      console.log(res);
-
       expect(res).toEqual([{ state: errorSymbol, error: 'err21' }]);
     });
 
