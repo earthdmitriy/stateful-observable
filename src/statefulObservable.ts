@@ -1,100 +1,86 @@
 import {
   BehaviorSubject,
-  combineLatest,
-  filter,
+  combineLatest, from,
   map,
   merge,
+  mergeMap,
   Observable,
   ObservableInput,
   ObservedValueOf,
   of,
   OperatorFunction,
-  switchMap,
-} from "rxjs";
+  tap
+} from 'rxjs';
+import { fillStatefulObservable } from './chaining';
 import {
-  catchResponseError,
-  defaultCache,
-  mapToLoading,
-  pipeError,
-  pipeRaw,
-  pipeValue,
-} from "./operators";
-import { isError, isLoading, isSuccess } from "./response-container";
+  catchResponseError, mapToLoading
+} from './operators';
 import {
-  PipeErrorOperator,
-  PipeRawOperator,
-  PipeValueOperator,
-  ResponseWithStatus,
-  StatefulObservable,
-} from "./types";
+  StatefulObservable
+} from './types';
 
 type TmapOperator = <T, O extends ObservableInput<any>>(
-  project: (value: T, index: number) => O
+  project: (value: T, index: number) => O,
 ) => OperatorFunction<T, ObservedValueOf<O>>;
 
-export const fillStatefulObservable = <Result, Error>(
-  raw: Observable<ResponseWithStatus<Result, Error>>,
-  reload: () => void
-): StatefulObservable<Result, Error> => {
-  const cachedRaw$ = raw.pipe(defaultCache());
 
-  return {
-    raw$: cachedRaw$,
-
-    reload,
-
-    value$: cachedRaw$.pipe(filter(isSuccess)),
-    error$: cachedRaw$.pipe(
-      filter(isError),
-      map((e) => e.error)
-    ),
-    pending$: cachedRaw$.pipe(map(isLoading)),
-
-    pipe: (...args: Parameters<PipeRawOperator>) =>
-      fillStatefulObservable(cachedRaw$.pipe(pipeRaw(...args)), reload),
-
-    pipeValue: (...args: Parameters<PipeValueOperator>) =>
-      fillStatefulObservable(cachedRaw$.pipe(pipeValue(...args)), reload),
-
-    pipeError: (...args: Parameters<PipeErrorOperator>) =>
-      fillStatefulObservable(cachedRaw$.pipe(pipeError(...args)), reload),
-  } as StatefulObservable<Result, Error>;
-};
 
 export const statefulObservable = <Input, Response = Input>(
   options:
     | {
         input: Observable<Input>;
+        cacheKey?: (i: Input) => any[];
         loader?: (input: Input) => ObservableInput<Response>;
         mapOperator?: TmapOperator;
       }
     | {
         input?: Observable<Input>;
+        cacheKey?: (i: Input) => any[];
         loader: (input: Input) => ObservableInput<Response>;
         mapOperator?: TmapOperator;
+      },
+): StatefulObservable<Response, unknown> => { 
+  const {
+    input,
+    loader,
+    mapOperator = mergeMap,
+    cacheKey = () => [], // falsy cache key will skip caching
+  } = options;
+
+  const source$ = input ?? of(true as Input);
+  const cache$ = new BehaviorSubject({} as { [key: string]: Response });
+
+  const loading$ = combineLatest([source$, cache$]).pipe(
+    mapToLoading(),
+    catchResponseError(),
+  ); // source can throw errors too
+
+  const makeObservableInput = (input: Input) =>
+    loader ? loader(input) : of(input as unknown as Response);
+
+  const valueOrError$ = combineLatest([source$, cache$]).pipe(
+    map(([input, cacheMap]) => ({
+      input,
+      cacheMap,
+      key: cacheKey(input).join('|'),
+    })),
+    mapOperator(({ input, cacheMap, key }) => {
+      if (key) {// skip if no cache key
+        const cache = cacheMap[key];
+        if (cache) return of(cache);
       }
-): StatefulObservable<Response, unknown> => {
-  const { input, loader, mapOperator = switchMap } = options;
 
-  const source$ = (input?? of(true as Input));
-  const reload$ = new BehaviorSubject(true);
-
-  const inputWithReload$ = combineLatest([source$, reload$]).pipe(
-    map(([input]) => input)
-  );
-
-  const loading$ = inputWithReload$.pipe(mapToLoading(), catchResponseError()); // source can throw errors too
-
-  const valueOrError$ = inputWithReload$.pipe(
-    mapOperator((input) =>
-      loader ? loader(input) : of(input as unknown as Response)
-    ),
-    catchResponseError()
+      return from(makeObservableInput(input)).pipe(
+        tap({
+          next: (result) => (cacheMap[key] = result),
+        }),
+        catchResponseError(),
+      );
+    }),
+    catchResponseError(),
   );
 
   const raw = merge(loading$, valueOrError$);
 
-  return fillStatefulObservable<Response, unknown>(raw, () =>
-    reload$.next(true)
-  );
+  return fillStatefulObservable<Response, unknown>(raw, () => cache$.next({}));
 };

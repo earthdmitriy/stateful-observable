@@ -3,19 +3,20 @@ import {
   Observable,
   OperatorFunction,
   catchError,
+  concatMap,
   filter,
   map,
   merge,
   of,
   shareReplay,
-  startWith,
-} from "rxjs";
+  startWith
+} from 'rxjs';
 import {
   errorSymbol,
   isError,
   isSuccess,
   loadingSymbol,
-} from "./response-container";
+} from './response-container';
 import {
   PipeErrorOperator,
   PipeRawOperator,
@@ -23,7 +24,7 @@ import {
   ResponseError,
   ResponseLoading,
   ResponseWithStatus,
-} from "./types";
+} from './types';
 
 /**
  * RxJS operator that catches any error from the upstream observable and
@@ -55,7 +56,7 @@ export const catchResponseError = <T>(): OperatorFunction<
   T | ResponseError<unknown>
 > =>
   catchError((error) =>
-    of<ResponseError<unknown>>({ state: errorSymbol, error: error })
+    of<ResponseError<unknown>>({ state: errorSymbol, error: error }),
   );
 
 /**
@@ -107,8 +108,23 @@ export const defaultCache = <T>(): MonoTypeOperatorFunction<T> =>
 // helper to apply an array of operator functions to an observable's pipe
 export const applyPipe = <T, R = any>(
   obs: Observable<T>,
-  operations: OperatorFunction<any, any>[]
+  operations: OperatorFunction<any, any>[],
 ): Observable<R> => (obs.pipe as any).apply(obs, operations) as Observable<R>;
+
+export const splitBy =
+  <T, RTrue, RFalse>(
+    predicate: (value: T) => boolean,
+    trueOperator: OperatorFunction<T, RTrue>,
+    falseOperator: OperatorFunction<T, RFalse>,
+  ): OperatorFunction<T, RTrue | RFalse> =>
+  (source: Observable<T>): Observable<RTrue | RFalse> =>
+    merge(
+      source.pipe(filter(predicate), trueOperator),
+      source.pipe(
+        filter((v) => !predicate(v)),
+        falseOperator,
+      ),
+    );
 
 export const pipeRaw: PipeRawOperator =
   <Result, Error>(
@@ -124,8 +140,8 @@ export const pipeValue: PipeValueOperator =
   (raw: Observable<any>) => {
     const rawValue = raw.pipe(filter(isSuccess));
 
-    const rawPipedValue = applyPipe(rawValue, operations).pipe(
-      catchResponseError()
+    const rawPipedValue = rawValue.pipe(
+      concatMap((v) => applyPipe(of(v), operations).pipe(catchResponseError())),
     );
 
     const rawNotValue = raw.pipe(filter((r) => !isSuccess(r)));
@@ -139,11 +155,11 @@ export const pipeError: PipeErrorOperator =
   (raw: Observable<any>) => {
     const rawError = raw.pipe(
       filter(isError),
-      map((r) => r.error)
+      map((r) => r.error),
     );
 
     const rawPipedError = applyPipe(rawError, operations).pipe(
-      map((error): ResponseError<Error> => ({ state: errorSymbol, error }))
+      map((error): ResponseError<Error> => ({ state: errorSymbol, error })),
     );
 
     const rawNotError = raw.pipe(filter((r) => !isError(r)));

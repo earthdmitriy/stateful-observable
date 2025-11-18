@@ -1,11 +1,11 @@
 import { combineLatest, map } from "rxjs";
+import { fillStatefulObservable } from "./chaining";
 import {
   errorSymbol,
   isError,
   isLoading,
   loadingSymbol,
 } from "./response-container";
-import { fillStatefulObservable } from "./statefulObservable";
 import { ResponseError, ResponseLoading, StatefulObservable } from "./types";
 
 type UnwrapStatefulObservable<T> =
