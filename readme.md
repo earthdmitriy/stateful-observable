@@ -25,12 +25,14 @@ import { statefulObservable } from '@rx-evo/stateful-observable';
 
 // Create a basic stateful observable
 const datastream = statefulObservable({
-  input: new BehaviorSubject(1)
+  input: new BehaviorSubject(1),
+  loader: value => api.fetch(value),
+  cacheKey: (input) => [input]
 });
 
 // Transform values with pipeValue
 const transformedData = datastream.pipeValue(
-  map(value => value * 2)
+  map(processResponse)
 );
 
 // Handle errors
@@ -45,6 +47,16 @@ datastream.pending$.subscribe(isLoading => {
 
 // Manually trigger reload
 datastream.reload();
+```
+
+```html
+<div [class.withSpinner]="stream.pending$ | async">
+  @if (stream.error$ | async) {
+    <app-generic-error text="Failed to load"></app-generic-error>
+  } @else {
+    <app-data-widget [displayData]="stream.data$ | async"></app-data-widget>
+  }
+</div>
 ```
 
 ## More recipes
@@ -206,6 +218,7 @@ Template will get:
  - Loading: true
  - Value: empty
  - Error: empty
+
 Only spinner or skeleton will be shown.
 
 What if it contain 'value' event?
@@ -213,6 +226,7 @@ Template will get:
  - Loading: false
  - Value: data
  - Error: empty
+
 Template will render data.
 
 What's with 'error' event?
@@ -220,6 +234,7 @@ Template will get:
  - Loading: false
  - Value: empty
  - Error: error
+
 Template will render error.
 
 Therefore any subsriber at any time will get correct value.
@@ -234,6 +249,8 @@ You might find answers here.
 
 Or create new issue https://github.com/earthdmitriy/stateful-observable/issues
 
+## Changelog
+0.1.0 - option defining cacheKey and cacheSize
 
 ## License
 

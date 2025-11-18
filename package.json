@@ -8,10 +8,6 @@
     "dist",
     "README.md"
   ],
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/earthdmitriy/stateful-observable"
-  },
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json",
     "tsup": "rm -rf dist && tsup",
@@ -21,6 +17,24 @@
     "eslint": "eslint --fix",
     "bump": "npm version patch && git push && git push --tags"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/earthdmitriy/stateful-observable"
+  },
+  "keywords": [
+    "Rx",
+    "RxJS",
+    "ReactiveX",
+    "ReactiveExtensions",
+    "Streams",
+    "Observables",
+    "Observable",
+    "StatefulObservable",
+    "Stream",
+    "ES6",
+    "ES2015"
+  ],
+  "sideEffects": false,
   "exports": {
     ".": {
       "import": {

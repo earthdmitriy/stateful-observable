@@ -84,10 +84,10 @@ With spinner
 With skeleton
 
 ```html
-@if (stream.pending | async) {
+@if (stream.pending$ | async) {
   <app-skeleton></app-skeleton>
 } @else { 
-  @if (stream.error | async) {
+  @if (stream.error$ | async) {
     <app-generic-error text="Failed to load"></app-generic-error>
   } @else {
     <app-data-widget [displayData]="stream.data$ | async"></app-data-widget>
@@ -103,10 +103,10 @@ protected readonly showData = signal(false);
 
 ```html
 @if (showData()) {
-  @if (stream.pending | async) {
+  @if (stream.pending$ | async) {
     <app-skeleton></app-skeleton>
   } @else { 
-    @if (stream.error | async) {
+    @if (stream.error$ | async) {
       <app-generic-error text="Failed to load"></app-generic-error>
     } @else {
       <app-data-widget [displayData]="stream.data$ | async"></app-data-widget>
