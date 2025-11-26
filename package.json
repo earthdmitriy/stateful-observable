@@ -10,7 +10,7 @@
   ],
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json",
-    "tsup": "rm -rf dist && tsup",
+    "tsup": "rm -rf dist && tsup && cp readme.md dist/ && cp docs/recipes.md dist/",
     "test": "jest",
     "test:watch": "jest --watch",
     "prettier": "prettier --log-level warn --write \"src/**/*.ts\"",

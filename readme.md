@@ -54,7 +54,7 @@ datastream.reload();
   @if (stream.error$ | async) {
     <app-generic-error text="Failed to load"></app-generic-error>
   } @else {
-    <app-data-widget [displayData]="stream.data$ | async"></app-data-widget>
+    <app-data-widget [displayData]="stream.value$ | async"></app-data-widget>
   }
 </div>
 ```
@@ -86,6 +86,8 @@ Returns a `StatefulObservable` object with the following properties:
 - `pipe(...)`: Method to apply operators to the raw observable
 - `pipeValue(...)`: Method to transform successful values
 - `pipeError(...)`: Method to transform error states
+- `cacheKey`: Method to map input to key identifying the query
+- `cacheSize`: Cache size. Defaults to 42. Cache use LFO strategy
 
 ## Error Handling
 

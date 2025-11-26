@@ -14,23 +14,123 @@ export type ResponseWithStatus<T, E = unknown> =
   | ResponseError<E>
   | T;
 
+/**
+ * The minimal "raw" shape returned by the factory that backs the higher-level
+ * `StatefulObservable` API.
+ *
+ * - `raw$` emits the full response union: a loading sentinel, an error value
+ *   (`ResponseError<Error>`) or the successful payload of type `T`.
+ * - `reload()` triggers re-evaluation of the underlying source/loader (for
+ *   example to force a network refetch). Implementations typically push a
+ *   value into an internal subject to cause the loader to run again.
+ *
+ * @template T - successful result type emitted by the stream
+ * @template Error - error payload type used for `ResponseError<Error>` emissions
+ */
 export type StatefulObservableRaw<T = unknown, Error = unknown> = {
+  /** 
+   * Observable that emits {@link ResponseWithStatus} values (loading|error|success). 
+   * 
+   * @remarks you should usually prefer `value$` / `error$` / `pending$` streams
+   * */
   raw$: Observable<ResponseWithStatus<T, Error>>;
+
+  /** 
+   * Trigger to manually refresh/reload the current input. 
+   * 
+   * @remarks useful to error recovery or force re-evaluation of the loader (and following operators in `pipeValue`) without changing the input.
+   * */
   reload: () => void;
 };
 
+/**
+ * Convenience typed streams derived from the `raw$` stream.
+ *
+ * - `value$` emits only successful payloads of type `T`.
+ * - `error$` emits either `false` (when there is no error) or the error payload
+ *   of type `Error` extracted from an error response.
+ * - `pending$` emits booleans indicating whether the loader is currently in a
+ *   loading state.
+ *
+ * These streams are intended for direct consumption in views or business logic
+ * so subscribers don't need to perform repetitive filtering/mapping of the
+ * `raw$` union type.
+ *
+ * @template T - successful result type
+ * @template Error - error payload type
+ */
 export type StatefulObservableStreams<T = unknown, Error = unknown> = {
+  /**
+   * Successful values only (filters out loading/error sentinels).
+   *
+   * Template (async pipe):
+   * ```html
+   * @if (stream.value$ | async as data) {
+   *   <app-data [data]="data"></app-data>
+   * }
+   * ```
+   */
   value$: Observable<T>;
+
+  /**
+   * Error payloads or `false` when there is no error.
+   *
+   * Template (async pipe):
+   * ```html
+   * @if (stream.error$ | async as error) {
+   *   <app-error [error]="error"></app-error>
+   * } @else {
+   *   @if (stream.value$ | async as data) {
+   *     <app-data [data]="data"></app-data>
+   *   }
+   * }
+   */
   error$: Observable<false | Error>;
+
+  /**
+   * Boolean loading indicator — `true` while a loader is in-flight.
+   *
+   * Template (async pipe):
+   * ```html
+   * <div [class.loading]="stream.pending$ | async">...</div>
+   * ```
+   */
   pending$: Observable<boolean>;
 };
 
 export type StatefulObservableUtils<T = unknown, Error = unknown> = {
+  /**
+   * Apply a sequence of MonoType operators to the underlying `raw` stream.
+   *
+   * Use `pipe(...)` when you need to operate on the full ResponseWithStatus
+   * union (loading / error / value). Typical use-cases are caching or time-
+   * based operators that must observe or preserve the loading/error sentinels
+   * (for example `shareReplay`, `debounceTime`, `throttleTime`).
+   *
+   * IMPORTANT: this method only accepts operators that are "mono-type" for
+   * `ResponseWithStatus<T>` (i.e. `MonoTypeOperatorFunction<ResponseWithStatus<T>>`).
+   * That means the operator must not change the outer response shape. If you
+   * need to transform the successful `T` payload, prefer `pipeValue(...)`.
+   *
+   * @returns A new `StatefulObservable` that reflects the applied operators.
+   */
   pipe(): StatefulObservable<T, Error>;
   pipe(
     ...operations: MonoTypeOperatorFunction<ResponseWithStatus<T>>[]
   ): StatefulObservable<T>;
 
+  /**
+   * Operate on successful values only — behaves like `Observable.prototype.pipe`
+   * for the `value$` stream.
+   *
+   * The provided operators receive the successful payload `T` (not the
+   * ResponseWithStatus wrapper) and should return transformed values. Errors
+   * and loading sentinels are preserved and merged back into the resulting
+   * `raw` stream so consumers continue to receive the correct state.
+   *
+   * Use `pipeValue(...)` for data transformations (mapping, filtering, async
+   * mapping of the payload) while keeping the stateful semantics intact.
+   */
   pipeValue(): StatefulObservable<T, Error>;
   // omit error type because stream can fail with another error
   pipeValue<A>(op1: OperatorFunction<T, A>): StatefulObservable<A>;
@@ -107,6 +207,24 @@ export type StatefulObservableUtils<T = unknown, Error = unknown> = {
     ...operations: OperatorFunction<any, any>[]
   ): StatefulObservable<unknown>;
 
+  /**
+  * Transform error payloads emitted by the `error$` stream.
+  *
+  * The operators passed to `pipeError(...)` operate on the error payload
+  * (type `Error`) and must return a new error payload. The resulting value
+  * will be re-wrapped into the error sentinel `{ state: errorSymbol, error }`.
+  *
+  * Important: operators supplied here MUST NOT throw. Throwing inside an
+  * error-mapper may produce a different error shape or will be converted to
+  * a ResponseError by the internal `catchResponseError` wrapper — prefer
+  * returning a mapped value instead of throwing.
+  *
+  * Tip: when mapping to different error shapes prefer using small
+  * type-guard-based mapper functions so the compiler can narrow the error
+  * type reliably. For example, use helpers like `isNotFound(err)` or
+  * `isValidationError(err)` inside your operator to choose the mapped value
+  * and preserve strong typing across `pipeError` chains.
+   */
   pipeError(): StatefulObservable<T, Error>;
   pipeError<A>(op1: OperatorFunction<T, A>): StatefulObservable<T, A>;
   pipeError<A, B>(

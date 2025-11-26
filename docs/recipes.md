@@ -32,6 +32,8 @@ private readonly stream = statefulObservable({
   input: someStream$, // any Observable
   loader: (input) => this.apiService.fetchSomething(input),
   mapOperator: concatMap, // by default switchMap
+  cacheKey: (input) => [input],
+  cacheSize: 100500
 });
 ```
 
@@ -56,6 +58,7 @@ private readonly stream = statefulObservable({
 ```
 
 ## Use cases
+For angular
 
 ### Stateful request in component
 
@@ -76,7 +79,7 @@ With spinner
   @if (stream.error$ | async) {
     <app-generic-error text="Failed to load"></app-generic-error>
   } @else {
-    <app-data-widget [displayData]="stream.data$ | async"></app-data-widget>
+    <app-data-widget [displayData]="stream.value$ | async"></app-data-widget>
   }
 </div>
 ```
@@ -88,15 +91,55 @@ With skeleton
   <app-skeleton></app-skeleton>
 } @else { 
   @if (stream.error$ | async) {
-    <app-generic-error text="Failed to load"></app-generic-error>
+    <app-generic-error text="Failed to load" (reload)="stream.reload()"></app-generic-error>
   } @else {
-    <app-data-widget [displayData]="stream.data$ | async"></app-data-widget>
+    <app-data-widget [displayData]="stream.value$ | async"></app-data-widget>
   } 
 }
 ```
 
-It is lazy
+Recommended way - stateful container
+```html
+<app-stateful-container
+  [pending]="stream.pending$ | async"
+  [error]="stream.error$ | async"
+  (reload)="stream.reload()"
+>
+  @if (stream.value$ | async; as data) {
+    <app-data-widget [displayData]="data"></app-data-widget>
+  }
+</app-stateful-container>
+```
+Or
+```html
+<app-stateful-container
+  [stream]="stream"
+>
+  @if (stream.value$ | async; as data) {
+    <app-data-widget [displayData]="data"></app-data-widget>
+  }
+</app-stateful-container>
+```
+If it's ok for you to bind component to statefulObservable
 
+
+It's template
+```html
+<div [class.withSpinner]="pending()">
+  @if (error()) {
+    <app-generic-error (reload)="reload.emit()"></app-generic-error>
+  } @else {
+    <ng-content></ng-content>
+  }
+</div>
+```
+Stateful container should merge your default loading indicator and error view. Here is only generic implementation because everyone use own loading indicator and own error-handling views (if they exist, of course).
+
+
+In UI, it is the most boilerplate-free way to handle loading and error states.
+
+
+It is lazy
 ```typescript
 protected readonly showData = signal(false);
 ```
@@ -109,7 +152,7 @@ protected readonly showData = signal(false);
     @if (stream.error$ | async) {
       <app-generic-error text="Failed to load"></app-generic-error>
     } @else {
-      <app-data-widget [displayData]="stream.data$ | async"></app-data-widget>
+      <app-data-widget [displayData]="stream.value$ | async"></app-data-widget>
     } 
   } 
 }
@@ -147,7 +190,7 @@ With spinner
   @if (stream.error$ | async) {
     <app-generic-error text="Failed to load client"></app-generic-error>
   } @else {
-    <app-client-info [client]="stream.data$ | async"></app-client-info>
+    <app-client-info [client]="stream.value$ | async"></app-client-info>
   }
 </div>
 ```
@@ -201,7 +244,7 @@ With spinner
   @if (populatedBucketStream.error$ | async) {
     <app-generic-error text="Failed to load"></app-generic-error>
   } @else {
-    <app-bucket [data]="populatedBucketStream.data$ | async"></app-bucket>
+    <app-bucket [data]="populatedBucketStream.value$ | async"></app-bucket>
   }
 </div>
 ```
@@ -219,15 +262,15 @@ private readonly destroyRef = inject(DestroyRef);
 protected readonly bucketStream = statefulObservable({
   input: toObservable(this.clientId),
   loader: (clientId) => this.bucketApi.getClientBucket$(clientId),
-  processResponse: (response, clientId) =>
-    response.products.map((productInBucket) => ({
-      shortProduct: productInBucket,
-      expanded: signal(false),
-      productDetailsStream: statefulObservable({
-        loader: () => this.productApi.getProduct$(productInBucket.productId),
-      }),
-    })),
-});
+}).pipeValue(map((response) =>
+  response.products.map((productInBucket) => ({
+    shortProduct: productInBucket,
+    expanded: signal(false),
+    productDetailsStream: statefulObservable({
+      loader: () => this.productApi.getProduct$(productInBucket.productId),
+    }),
+  }))
+));
 ```
 
 Unwrapping in template
