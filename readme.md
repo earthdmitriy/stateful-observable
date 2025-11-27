@@ -11,7 +11,7 @@ npm install @rx-evo/stateful-observable
 ## Key Features
 
 - Wraps RxJS observables with loading, error, and success states
-- Provides true reactivity - works with ifinite amount of events projecting them correctly into 'value', 'pending' and 'error' streams
+- Provides true reactivity - works with infinite amount of events projecting them correctly into 'value', 'pending' and 'error' streams
 - Provides type-safe error handling
 - Supports value and error transformation through piping
 - Enables easy combination of multiple stateful observables
@@ -102,7 +102,7 @@ const datastream = statefulObservable({
 );
 
 // Access error states
-datastream.error.subscribe(error => {
+datastream.error$.subscribe(error => {
   // Handle error
 });
 ```
@@ -213,6 +213,21 @@ Angular template for example
   </div>
 ```
 
+```markdown
+              ┌──────────────┐                             ┌───────────┐
+     ┌────────│ Loading:true │─────────────────┐        ┌──│ loading$  │
+     │        └──────────────┘                 │        │  └───────────┘
+┌──────────┐  ┌────────────┐ok┌─────────────┐ok│────────│  ┌───────────┐
+│  Source  │──│ Processing │──│ Processing  │──│  raw$  │──│ value$    │
+└──────────┘  └────────────┘  └─────────────┘  │────────│  └───────────┘
+                    │                │         │        │  ┌───────────┐
+                    │ fail           │ fail    │        └──│ error$    │
+                ┌────────┐       ┌────────┐    │           └───────────┘
+                │  Error │       │ Error  │────│                        
+                └────────┘       └────────┘    │                        
+                    └──────────────────────────┘                                         
+```
+
 And, where magic happens. As you remember only last value being cached in raw stream.
 
 Let's imagine it 'loading' event.
@@ -241,9 +256,27 @@ Template will render error.
 
 Therefore any subsriber at any time will get correct value.
 
-Moreover - in case of reload we'll get new `true` in 'loading' stream.
+Moreover - in case of reload (or new input) we'll get new `loading` event in `raw` stream. It will override prevous value in curent instance of stateful observable, and in all subsequent stateful observables createt through 'pipeValue' and 'pipeError'.
 And datastream (or error) will be kept intact until new datastream (or error) event appear.
 It will prevent unnecessary layout shift.
+
+## How does this compare to pure RxJS?
+
+Stateful Observables are a purposeful abstraction built on top of RxJS.
+
+- Origin: They were created to solve the repetitive boilerplate of handling loading, error, and data states in a large Angular application.
+
+- Purpose: They encapsulate common patterns so you don't have to rebuild them repeatedly.
+
+- Relationship: They are designed to work with RxJS, not replace it. We recommend using this library for standard state management (~80% of cases) and pure RxJs for the remaining complex scenarios.
+
+## How is this different from a global state manager (like NgRx, Akita, etc.)?
+
+Our approach is founded on a key principle: global state creates more problems than it solves.
+
+- Problem with Global State: It leads to tight coupling across your app, making it fragile and hard to debug. Tracing the source of data becomes difficult.
+
+- Our Solution: Atomic, feature-specific states. By keeping state granular and co-located, you always know exactly where your data comes from, resulting in more transparent and predictable code.
 
 ## Why [XXX] / I want [YYY]?
 Check Architecture Decision Records https://github.com/earthdmitriy/stateful-observable/blob/main/docs/adr.md 

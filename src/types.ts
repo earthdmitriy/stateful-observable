@@ -38,7 +38,7 @@ export type StatefulObservableRaw<T = unknown, Error = unknown> = {
   /** 
    * Trigger to manually refresh/reload the current input. 
    * 
-   * @remarks useful to error recovery or force re-evaluation of the loader (and following operators in `pipeValue`) without changing the input.
+   * @remarks useful for error recovery or force re-evaluation of the loader (and following operators in `pipeValue`) without changing the input.
    * */
   reload: () => void;
 };
