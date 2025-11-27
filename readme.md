@@ -73,6 +73,8 @@ Creates a new stateful observable wrapper.
 - `input`: Source observable providing input values
 - `loader`: (Optional) Function to transform input values
 - `mapOperator`: (Optional) Custom operator for mapping values (defaults to switchMap)
+- `cacheKey`: Method mapping input to key identifying the query
+- `cacheSize`: Cache size. Defaults to 42. Cache use LFO strategy
 
 #### Returns
 
@@ -86,8 +88,6 @@ Returns a `StatefulObservable` object with the following properties:
 - `pipe(...)`: Method to apply operators to the raw observable
 - `pipeValue(...)`: Method to transform successful values
 - `pipeError(...)`: Method to transform error states
-- `cacheKey`: Method to map input to key identifying the query
-- `cacheSize`: Cache size. Defaults to 42. Cache use LFO strategy
 
 ## Error Handling
 
