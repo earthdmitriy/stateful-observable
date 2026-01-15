@@ -1,17 +1,14 @@
-import {
-  filter,
-  map, Observable
-} from "rxjs";
-
-import { defaultCache, pipeError, pipeRaw, pipeValue } from "./operators";
-import { isError, isLoading, isSuccess } from "./response-container";
+import { filter, map, Observable } from 'rxjs';
+import { defaultCache, pipeError, pipeRaw, pipeValue } from './operators';
+import { isError, isLoading, isSuccess } from './response-container';
+import { makeSubscribe } from './subscribable';
 import {
   PipeErrorOperator,
   PipeRawOperator,
   PipeValueOperator,
   ResponseWithStatus,
-  StatefulObservable
-} from "./types";
+  StatefulObservable,
+} from './types';
 
 export const fillStatefulObservable = <Result, Error>(
   raw: Observable<ResponseWithStatus<Result, Error>>,
@@ -39,5 +36,7 @@ export const fillStatefulObservable = <Result, Error>(
 
     pipeError: (...args: Parameters<PipeErrorOperator>) =>
       fillStatefulObservable(cachedRaw$.pipe(pipeError(...args)), reload),
+
+    subscribe: makeSubscribe(cachedRaw$),
   } as StatefulObservable<Result, Error>;
 };
