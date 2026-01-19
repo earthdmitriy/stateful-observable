@@ -310,7 +310,7 @@ protected readonly stream = statefulObservable({
     if (is404(error)) return "404";
     if (is403(error)) return "403";
     if (is500(error)) return "500";
-    return "unknown"; // don't return error as is because it will merge return union type into unknown
+    return "unknown"; // don't return error as is because it will merge union type into unknown
   })
 );
 ```

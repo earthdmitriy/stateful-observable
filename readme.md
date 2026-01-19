@@ -285,8 +285,12 @@ You might find answers here.
 Or create new issue https://github.com/earthdmitriy/stateful-observable/issues
 
 ## Changelog
-0.2.0 - `subcribe` method on statefulObservable. Therefore it can be directly passed into async pipe, or converter to signal with toSignal
-0.1.0 - option defining cacheKey and cacheSize
+0.2.0 
+- `subcribe` method on statefulObservable. Therefore it can be directly passed into async pipe, or converter to signal with toSignal.
+- statefulObservable constructor - shorthands `statefulObservable(myInput$)` for input and `statefulObservable(() => http.get("/items"))` for loader
+
+0.1.0 
+- option defining cacheKey and cacheSize
 
 ## License
 
