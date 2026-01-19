@@ -1,11 +1,13 @@
 import {
   MonoTypeOperatorFunction,
   Observable,
+  ObservableInput,
+  ObservedValueOf,
   Observer,
   OperatorFunction,
   Unsubscribable,
-} from 'rxjs';
-import { errorSymbol, loadingSymbol } from './response-container';
+} from "rxjs";
+import { errorSymbol, loadingSymbol } from "./response-container";
 
 export type ResponseLoading = {
   state: typeof loadingSymbol;
@@ -19,6 +21,99 @@ export type ResponseWithStatus<T, E = unknown> =
   | ResponseLoading
   | ResponseError<E>
   | T;
+
+export type TmapOperator = <T, O extends ObservableInput<any>>(
+  project: (value: T, index: number) => O,
+) => OperatorFunction<T, ObservedValueOf<O>>;
+
+/**
+ * Parameters when an `input` observable is provided.
+ *
+ * @template Input - type of values produced by the input observable
+ * @template Response - type produced by the loader or passed through when no loader is used
+ */
+export type ParamsWithInput<Input, Response> = {
+  /**
+   * Source observable that drives requests/values.
+   * When provided, every emission from this observable will be processed
+   * by the loader (if present) or passed through as the response.
+   */
+  input: Observable<Input>;
+
+  /**
+   * Optional function that returns a cache key for a given input value.
+   * The returned array is joined internally to form a string key. If the
+   * function returns a falsy/empty array the caching logic will be skipped
+   * for that input.
+   */
+  cacheKey?: (i: Input) => any[];
+
+  /**
+   * Maximum number of entries to keep in the internal cache. Defaults to the
+   * value supplied by the factory (42 in the implementation).
+   */
+  cacheSize?: number;
+
+  /**
+   * Optional loader that maps an input value to an ObservableInput of Response.
+   * If omitted the input value itself is used as the response value.
+   */
+  loader?: (input: Input) => ObservableInput<Response>;
+
+  /**
+   * Operator used to map input -> response observable. Defaults to `switchMap`.
+   * Accepts a project function that returns an ObservableInput and converts it
+   * into an operator function compatible with RxJS pipe.
+   */
+  mapOperator?: TmapOperator;
+};
+
+/**
+ * Parameters when a `loader` function is required but `input` is optional.
+ *
+ * This variant allows creating a stateful observable that starts from a
+ * constant trigger (when `input` is not provided) but still requires a
+ * `loader` to produce responses from an input value.
+ */
+export type ParamsWithLoader<Input, Response> = {
+  /**
+   * Optional source observable. If omitted the implementation will use a
+   * single default trigger (e.g. `of(true as Input)`) so the loader is still
+   * invoked when the stateful observable is subscribed/reloaded.
+   */
+  input?: Observable<Input>;
+
+  /**
+   * Optional cache key generator for the input value. See `ParamsWithInput`.
+   */
+  cacheKey?: (i: Input) => any[];
+
+  /**
+   * Maximum number of cache entries to retain. See `ParamsWithInput`.
+   */
+  cacheSize?: number;
+
+  /**
+   * Loader function which must be provided for this parameter shape. It maps
+   * an input to an ObservableInput of Response. The result will be consumed
+   * and cached according to the cache settings.
+   */
+  loader: (input: Input) => ObservableInput<Response>;
+
+  /**
+   * Operator used to map input -> response observable. Defaults to `switchMap`.
+   */
+  mapOperator?: TmapOperator;
+};
+
+export type OnlyInput<Input> = Observable<Input>;
+export type OnlyLoader<Response> = () => ObservableInput<Response>;
+
+export type StatefulObservableParams<Input, Response> =
+  | OnlyInput<Input>
+  | OnlyLoader<Response>
+  | ParamsWithInput<Input, Response>
+  | ParamsWithLoader<Input, Response>;
 
 /**
  * The minimal "raw" shape returned by the factory that backs the higher-level
@@ -34,16 +129,16 @@ export type ResponseWithStatus<T, E = unknown> =
  * @template Error - error payload type used for `ResponseError<Error>` emissions
  */
 export type StatefulObservableRaw<T = unknown, Error = unknown> = {
-  /** 
-   * Observable that emits {@link ResponseWithStatus} values (loading|error|success). 
-   * 
+  /**
+   * Observable that emits {@link ResponseWithStatus} values (loading|error|success).
+   *
    * @remarks you should usually prefer `value$` / `error$` / `pending$` streams
    * */
   raw$: Observable<ResponseWithStatus<T, Error>>;
 
-  /** 
-   * Trigger to manually refresh/reload the current input. 
-   * 
+  /**
+   * Trigger to manually refresh/reload the current input.
+   *
    * @remarks useful for error recovery or force re-evaluation of the loader (and following operators in `pipeValue`) without changing the input.
    * */
   reload: () => void;
@@ -226,22 +321,22 @@ export type StatefulObservableUtils<T = unknown, Error = unknown> = {
   ): StatefulObservable<unknown>;
 
   /**
-  * Transform error payloads emitted by the `error$` stream.
-  *
-  * The operators passed to `pipeError(...)` operate on the error payload
-  * (type `Error`) and must return a new error payload. The resulting value
-  * will be re-wrapped into the error sentinel `{ state: errorSymbol, error }`.
-  *
-  * Important: operators supplied here MUST NOT throw. Throwing inside an
-  * error-mapper may produce a different error shape or will be converted to
-  * a ResponseError by the internal `catchResponseError` wrapper — prefer
-  * returning a mapped value instead of throwing.
-  *
-  * Tip: when mapping to different error shapes prefer using small
-  * type-guard-based mapper functions so the compiler can narrow the error
-  * type reliably. For example, use helpers like `isNotFound(err)` or
-  * `isValidationError(err)` inside your operator to choose the mapped value
-  * and preserve strong typing across `pipeError` chains.
+   * Transform error payloads emitted by the `error$` stream.
+   *
+   * The operators passed to `pipeError(...)` operate on the error payload
+   * (type `Error`) and must return a new error payload. The resulting value
+   * will be re-wrapped into the error sentinel `{ state: errorSymbol, error }`.
+   *
+   * Important: operators supplied here MUST NOT throw. Throwing inside an
+   * error-mapper may produce a different error shape or will be converted to
+   * a ResponseError by the internal `catchResponseError` wrapper — prefer
+   * returning a mapped value instead of throwing.
+   *
+   * Tip: when mapping to different error shapes prefer using small
+   * type-guard-based mapper functions so the compiler can narrow the error
+   * type reliably. For example, use helpers like `isNotFound(err)` or
+   * `isValidationError(err)` inside your operator to choose the mapped value
+   * and preserve strong typing across `pipeError` chains.
    */
   pipeError(): StatefulObservable<T, Error>;
   pipeError<A>(op1: OperatorFunction<T, A>): StatefulObservable<T, A>;

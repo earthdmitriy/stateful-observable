@@ -2,102 +2,31 @@ import {
   BehaviorSubject,
   combineLatest,
   from,
+  isObservable,
   map,
-  merge, Observable,
+  merge,
+  Observable,
   ObservableInput,
-  ObservedValueOf,
   of,
-  OperatorFunction,
   switchMap,
-  tap
+  tap,
 } from "rxjs";
 import { createCache } from "./cache";
 import { fillStatefulObservable } from "./chaining";
 import { catchResponseError, mapToLoading } from "./operators";
-import { StatefulObservable } from "./types";
+import {
+  ParamsWithInput,
+  ParamsWithLoader,
+  StatefulObservable,
+  StatefulObservableParams,
+} from "./types";
 
-type TmapOperator = <T, O extends ObservableInput<any>>(
-  project: (value: T, index: number) => O
-) => OperatorFunction<T, ObservedValueOf<O>>;
-
-/**
- * Parameters when an `input` observable is provided.
- *
- * @template Input - type of values produced by the input observable
- * @template Response - type produced by the loader or passed through when no loader is used
- */
-type ParamsWithInput<Input, Response> = {
-  /**
-   * Source observable that drives requests/values.
-   * When provided, every emission from this observable will be processed
-   * by the loader (if present) or passed through as the response.
-   */
-  input: Observable<Input>;
-
-  /**
-   * Optional function that returns a cache key for a given input value.
-   * The returned array is joined internally to form a string key. If the
-   * function returns a falsy/empty array the caching logic will be skipped
-   * for that input.
-   */
-  cacheKey?: (i: Input) => any[];
-
-  /**
-   * Maximum number of entries to keep in the internal cache. Defaults to the
-   * value supplied by the factory (42 in the implementation).
-   */
-  cacheSize?: number;
-
-  /**
-   * Optional loader that maps an input value to an ObservableInput of Response.
-   * If omitted the input value itself is used as the response value.
-   */
-  loader?: (input: Input) => ObservableInput<Response>;
-
-  /**
-   * Operator used to map input -> response observable. Defaults to `switchMap`.
-   * Accepts a project function that returns an ObservableInput and converts it
-   * into an operator function compatible with RxJS pipe.
-   */
-  mapOperator?: TmapOperator;
-};
-
-/**
- * Parameters when a `loader` function is required but `input` is optional.
- *
- * This variant allows creating a stateful observable that starts from a
- * constant trigger (when `input` is not provided) but still requires a
- * `loader` to produce responses from an input value.
- */
-type ParamsWithLoader<Input, Response> = {
-  /**
-   * Optional source observable. If omitted the implementation will use a
-   * single default trigger (e.g. `of(true as Input)`) so the loader is still
-   * invoked when the stateful observable is subscribed/reloaded.
-   */
-  input?: Observable<Input>;
-
-  /**
-   * Optional cache key generator for the input value. See `ParamsWithInput`.
-   */
-  cacheKey?: (i: Input) => any[];
-
-  /**
-   * Maximum number of cache entries to retain. See `ParamsWithInput`.
-   */
-  cacheSize?: number;
-
-  /**
-   * Loader function which must be provided for this parameter shape. It maps
-   * an input to an ObservableInput of Response. The result will be consumed
-   * and cached according to the cache settings.
-   */
-  loader: (input: Input) => ObservableInput<Response>;
-
-  /**
-   * Operator used to map input -> response observable. Defaults to `switchMap`.
-   */
-  mapOperator?: TmapOperator;
+const expandInput = <Input, Response>(
+  params: StatefulObservableParams<Input, Response>,
+): ParamsWithInput<Input, Response> | ParamsWithLoader<Input, Response> => {
+  if (typeof params === "function") return { loader: params };
+  if (isObservable(params)) return { input: params };
+  return params;
 };
 
 /**
@@ -134,33 +63,47 @@ type ParamsWithLoader<Input, Response> = {
  * - Caching is optional and controlled by `cacheKey` + `cacheSize`.
  *
  * @example
- * const store = statefulObservable({
+ * const stream = statefulObservable({
  *   input: myId$,
  *   loader: id => http.get(`/items/${id}`),
  *   cacheKey: id => [id],
  *   cacheSize: 100,
  * });
  * 
+ * // Shorthand example without input observable:
+ * const stream = statefulObservable(() => http.get("/items"));
+ * // equal to
+ * const stream = statefulObservable({
+ *   loader: () => http.get("/items"),
+ * });
+ * 
+ * // Shorthand example without loader:
+ * const stream = statefulObservable(myInput$);
+ * // equal to
+ * const stream = statefulObservable({
+ *   input: myInput$,
+ * });
+ *
  * More examples:
  * @see https://github.com/earthdmitriy/stateful-observable/blob/main/docs/recipes.md
  */
 export const statefulObservable = <Input, Response = Input>(
-  options: ParamsWithInput<Input, Response> | ParamsWithLoader<Input, Response>
+  options: StatefulObservableParams<Input, Response>,
 ): StatefulObservable<Response, unknown> => {
   const {
     input,
     loader,
     mapOperator = switchMap,
-    cacheKey = () => [], // falsy cache key will skip caching
+    cacheKey = () => [] as never[], // falsy cache key will skip caching
     cacheSize = 42,
-  } = options;
+  } = expandInput(options);
 
   const source$ = input ?? of(true as Input);
   const cache$ = new BehaviorSubject(createCache<Response>(cacheSize));
 
   const loading$ = combineLatest([source$, cache$]).pipe(
     mapToLoading(),
-    catchResponseError()
+    catchResponseError(),
   ); // source can throw errors too
 
   const makeObservableInput = (input: Input) =>
@@ -183,15 +126,15 @@ export const statefulObservable = <Input, Response = Input>(
         tap({
           next: (result) => cache.set(key, result),
         }),
-        catchResponseError()
+        catchResponseError(),
       );
     }),
-    catchResponseError()
+    catchResponseError(),
   );
 
   const raw = merge(loading$, valueOrError$);
 
   return fillStatefulObservable<Response, unknown>(raw, () =>
-    cache$.next(createCache<Response>(cacheSize))
+    cache$.next(createCache<Response>(cacheSize)),
   );
 };
