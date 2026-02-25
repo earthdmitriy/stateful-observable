@@ -95,8 +95,20 @@ const wrappedResponse$ = this.formValue$.pipe(
 ```
 
 This is better, but a new event from `formValue$` will emit `null` in the value, causing the previous content to be erased and resulting in unnecessary layout shifts.  
-The new Angular resource has this flaw as well. Example: https://earthdmitriy.github.io/rx-evo/wip/resource  
-Compare it with the behavior of a stateful observable: https://earthdmitriy.github.io/rx-evo/wip/stateful-observable
+The new Angular resource has this flaw as well.
+
+## About Angular Resources
+In short, the synchronous nature of signals imposes certain limitations.
+
+Using global state in a service is debatable because the resource isn't lazy and sends a request immediately. At the time, I had to put in a lot of effort to fight off unnecessary requests. It wasn't about resources, but a custom implementation that would send requests as soon as the service instance was created.
+
+I don't like that it resets the content when a new request starts (example here https://earthdmitriy.github.io/rx-evo/wip/resource – if the content is large, it doesn't look good). This behavior occurs because signals are inherently synchronous. Creating a version of the resource that wouldn't reset the content is also a bad idea, again due to the synchronous nature of signals. If someone calls resource.value() at the moment a new request starts, they will receive an outdated version of the data.
+
+Also, if you need to combine multiple requests, you require an additional utility (example here https://github.com/earthdmitriy/rx-evo/blob/master/src/app/components/wip/resource/resource.component.ts and here https://github.com/earthdmitriy/rx-evo/blob/master/src/app/services/resource/combineResources.ts#L21).
+
+So the answer is:
+Resources are okay when you need to load data from a component once and don't need to combine requests.
+For anything more complex, a fine-tuned RxJs will handle it better.
 
 ## Solution
 
@@ -132,8 +144,9 @@ The library should provide a function to combine stateful observables out of the
 const prices$ = this.pricesService.prices;
 const bucket$ = this.bucketService.bucket$;
 // Their combination
-const totalValue$ = combineStatefulObservable([prices$, bucket$],
-    ([prices, bucket]) => calculateTotal(prices, bucket)
+const totalValue$ = combineStatefulObservable(
+  [prices$, bucket$],
+  ([prices, bucket]) => calculateTotal(prices, bucket)
 );
 ```
 
@@ -184,7 +197,7 @@ However:
 
 Rename it to `statefulObservable` to better explain the library's nature.
 
-Add pipe methods to simplify interoperability.
+Add pipe methods to simplify interoperability and allow chaining.
 
 Three methods are provided:
 
@@ -213,13 +226,13 @@ const mapped = source.pipe(
     return this.api.fetchBy(valueWithState);
   })
 );
-// With a helper
+// Syncronous mapping with a helper
 const mapped = source.pipe(
   map(onlyValue((value) => transformValue(valueWithState)))
 );
-// Not ideal
+// Async mapping with a helper
 const mapped = source.pipe(
-  map(onlyValueObservable((value) => this.api.fetchBy(valueWithState)))
+  mergeMap(onlyValueObservable((value) => this.api.fetchBy(valueWithState)))
 );
 ```
 
@@ -256,7 +269,39 @@ However, signals are synchronous by nature, making it complicated to make them l
 
 Overall, laziness is a very important feature of observables because it allows declaring data streams but materializing them only when needed.
 
-Additionally, since the first version, the Angular team has added a `write` method to resources and almost every signal. This makes it impossible to declare pure data transformation pipes because anyone can interfere with them anywhere. This is unfortunate. Signals are still suitable for simple data management in components, but for complex scenarios, I prefer using Observables with this wrapper.
+Additionally, since the first version, the Angular team has added a `write` method to resources and linked signals. This makes it impossible to declare pure data transformation pipes because anyone can interfere with them anywhere. This is unfortunate. Signals are still suitable for simple data management in components, but for complex scenarios, I prefer using Observables with this wrapper.
+
+## Error logging
+Sometimes consumers don't subscribe to the `error$` stream and therefore don't see any feedback when an error occurs. Errors can become unintentionally muted. Handling errors in a separate stream is not a common pattern, so this is understandable.
+
+Some may say that a stateful observable simply mutes errors. That statement is false.
+
+As a solution, I added a side effect to `statefulObservable`. If there are no subscriptions to the `error$` stream, a specific message will be logged to the console:
+
+```
+Unhandled error in statefulObservable 'myDataStream #0'
+Subscribe to the 'error$' stream to handle and silence these errors
+Error details: [exception or network error]
+```
+
+Normally such errors won't be visible, but this message should help newcomers discover and handle them.
+
+### Meta info for logging
+For convenience, I've added an optional `name` parameter to the stream:
+
+```typescript
+const data = statefulObservable({
+  input: clientId$,
+  loader: (clientId) => fetchClient(client),
+  name: 'clientStream',
+}); // errors will refer to 'clientStream #0'
+
+const relatedData = data.pipeValue(
+  switchMap(({ foreignKey }) => fetchRelatedEntity(foreignKey)),
+); // errors will refer to 'clientStream #1'
+```
+
+`#1` is the index in the chain; it indicates which node of the transformation chain failed.
 
 # To Be Determined
 
@@ -285,3 +330,6 @@ const data = stream.pipeValue(map(processValue));
 // shorthand version
 const data = stream.mapValue(processValue);
 ```
+
+## Deprecate value$ output stream
+Since `subscribe` was added directly on the `statefulObservable` instance, there is no reason to subscribe to `value$` to receive data.

@@ -2,6 +2,7 @@ import { ResponseError, ResponseLoading, ResponseWithStatus } from "./types";
 
 export const loadingSymbol = Symbol('loading');
 export const errorSymbol = Symbol('error');
+export const metaSymbol = Symbol('meta');
 
 
 export const isLoading = <T>( 

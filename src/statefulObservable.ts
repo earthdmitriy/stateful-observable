@@ -14,9 +14,12 @@ import {
 import { createCache } from "./cache";
 import { fillStatefulObservable } from "./chaining";
 import { catchResponseError, mapToLoading } from "./operators";
+import { isError } from "./response-container";
 import {
+  FlatResponseContainer,
   ParamsWithInput,
   ParamsWithLoader,
+  ResponseError,
   StatefulObservable,
   StatefulObservableParams,
 } from "./types";
@@ -29,6 +32,15 @@ const expandInput = <Input, Response>(
   return params;
 };
 
+export const flattenResponse = <Response, Error>(
+  response: ResponseError<Error> | Response,
+): FlatResponseContainer<Response, Error> => {
+  if (isError(response)) {
+    return { error: response.error };
+  }
+  return { value: response };
+};
+
 /**
  * Create a stateful wrapper around an RxJS data flow.
  *
@@ -39,6 +51,7 @@ const expandInput = <Input, Response>(
  *    this mode a default single trigger is used when `input` is not supplied.
  *
  * The created `StatefulObservable` exposes:
+ *  - `subscribe(params)` — subscribe to the underlying raw observable,
  *  - `value$` — successful values only,
  *  - `error$` — error payloads only,
  *  - `pending$` — boolean loading indicator,
@@ -55,6 +68,8 @@ const expandInput = <Input, Response>(
  * @param {(i: Input) => any[]} [options.cacheKey] - Optional cache key generator. Return an array of values which will be joined to form the cache key.
  *   When the returned array is falsy or empty the value is not cached. When a truthy key is produced successful responses are cached and reused for identical keys.
  * @param {number} [options.cacheSize=42] - Maximum number of entries retained in the internal LRU-like cache.
+ * @param {string} [options.name] - Optional name for debugging/logging purposes.
+ * @param {LogInput<Input> & LogResponse<Response>} [options.log] - Optional logging function to log inputs and outputs of the stream.
  * @returns {StatefulObservable<Response, Error = unknown>} A stateful observable exposing typed streams and helpers.
  *
  * @remarks
@@ -69,14 +84,14 @@ const expandInput = <Input, Response>(
  *   cacheKey: id => [id],
  *   cacheSize: 100,
  * });
- * 
+ *
  * // Shorthand example without input observable:
  * const stream = statefulObservable(() => http.get("/items"));
  * // equal to
  * const stream = statefulObservable({
  *   loader: () => http.get("/items"),
  * });
- * 
+ *
  * // Shorthand example without loader:
  * const stream = statefulObservable(myInput$);
  * // equal to
@@ -96,6 +111,8 @@ export const statefulObservable = <Input, Response = Input>(
     mapOperator = switchMap,
     cacheKey = () => [] as never[], // falsy cache key will skip caching
     cacheSize = 42,
+    name = "unnamed",
+    log,
   } = expandInput(options);
 
   const source$ = input ?? of(true as Input);
@@ -116,6 +133,7 @@ export const statefulObservable = <Input, Response = Input>(
       key: cacheKey(input).join("|"),
     })),
     mapOperator(({ input, cache, key }) => {
+      if (log) log({ input }, name, 0);
       if (key) {
         // skip if no cache key
         const cached = cache.get(key);
@@ -130,11 +148,20 @@ export const statefulObservable = <Input, Response = Input>(
       );
     }),
     catchResponseError(),
+    tap((raw) => {
+      if (log) log(flattenResponse(raw), name, 0);
+    }),
   );
 
   const raw = merge(loading$, valueOrError$);
+  const meta = [{ errorSubscriptions: 0 }];
 
-  return fillStatefulObservable<Response, unknown>(raw, () =>
-    cache$.next(createCache<Response>(cacheSize)),
-  );
+  return fillStatefulObservable<Response, unknown>({
+    raw,
+    name,
+    meta,
+    log,
+    index: -1, // will be incremented to 0 in fillStatefulObservable
+    reload: () => cache$.next(createCache<Response>(cacheSize)),
+  });
 };

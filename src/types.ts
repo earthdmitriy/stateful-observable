@@ -7,7 +7,7 @@ import {
   OperatorFunction,
   Unsubscribable,
 } from "rxjs";
-import { errorSymbol, loadingSymbol } from "./response-container";
+import { errorSymbol, loadingSymbol, metaSymbol } from "./response-container";
 
 export type ResponseLoading = {
   state: typeof loadingSymbol;
@@ -17,14 +17,62 @@ export type ResponseError<E = unknown> = {
   state: typeof errorSymbol;
   error: E;
 };
+
 export type ResponseWithStatus<T, E = unknown> =
   | ResponseLoading
   | ResponseError<E>
   | T;
 
+export type FlatResponseContainer<Value, Error = unknown> =
+  | {
+      value: Value;
+    }
+  | {
+      error: Error;
+    };
+
+export type LogFnWithInput<Input, Response> = (
+  value: { input: Input } | FlatResponseContainer<Response>,
+  name: string,
+  index: number,
+) => void;
+
+export type LogFn<Response,Error> = (
+  value: FlatResponseContainer<Response, Error>,
+  name: string,
+  index: number,
+) => void;
+
+export type MetaInfo = { errorSubscriptions: number };
+
 export type TmapOperator = <T, O extends ObservableInput<any>>(
   project: (value: T, index: number) => O,
 ) => OperatorFunction<T, ObservedValueOf<O>>;
+
+export type CommonParams<Input, Response> = {
+  /**
+   * Maximum number of entries to keep in the internal cache. Defaults to the
+   * value supplied by the factory (42 in the implementation).
+   */
+  cacheSize?: number;
+
+  /**
+   * Operator used to map input -> response observable. Defaults to `switchMap`.
+   * Accepts a project function that returns an ObservableInput and converts it
+   * into an operator function compatible with RxJS pipe.
+   */
+  mapOperator?: TmapOperator;
+
+  /**
+   * An optional name for the stateful observable, used for debugging purposes.
+   */
+  name?: string;
+
+  /**
+   * Optional logging hooks called for each value.
+   */
+  log?: LogFnWithInput<Input, Response>;
+};
 
 /**
  * Parameters when an `input` observable is provided.
@@ -32,7 +80,7 @@ export type TmapOperator = <T, O extends ObservableInput<any>>(
  * @template Input - type of values produced by the input observable
  * @template Response - type produced by the loader or passed through when no loader is used
  */
-export type ParamsWithInput<Input, Response> = {
+export type ParamsWithInput<Input, Response> = CommonParams<Input, Response> & {
   /**
    * Source observable that drives requests/values.
    * When provided, every emission from this observable will be processed
@@ -49,23 +97,10 @@ export type ParamsWithInput<Input, Response> = {
   cacheKey?: (i: Input) => any[];
 
   /**
-   * Maximum number of entries to keep in the internal cache. Defaults to the
-   * value supplied by the factory (42 in the implementation).
-   */
-  cacheSize?: number;
-
-  /**
    * Optional loader that maps an input value to an ObservableInput of Response.
    * If omitted the input value itself is used as the response value.
    */
   loader?: (input: Input) => ObservableInput<Response>;
-
-  /**
-   * Operator used to map input -> response observable. Defaults to `switchMap`.
-   * Accepts a project function that returns an ObservableInput and converts it
-   * into an operator function compatible with RxJS pipe.
-   */
-  mapOperator?: TmapOperator;
 };
 
 /**
@@ -75,7 +110,10 @@ export type ParamsWithInput<Input, Response> = {
  * constant trigger (when `input` is not provided) but still requires a
  * `loader` to produce responses from an input value.
  */
-export type ParamsWithLoader<Input, Response> = {
+export type ParamsWithLoader<Input, Response> = CommonParams<
+  Input,
+  Response
+> & {
   /**
    * Optional source observable. If omitted the implementation will use a
    * single default trigger (e.g. `of(true as Input)`) so the loader is still
@@ -84,14 +122,12 @@ export type ParamsWithLoader<Input, Response> = {
   input?: Observable<Input>;
 
   /**
-   * Optional cache key generator for the input value. See `ParamsWithInput`.
+   * Optional function that returns a cache key for a given input value.
+   * The returned array is joined internally to form a string key. If the
+   * function returns a falsy/empty array the caching logic will be skipped
+   * for that input.
    */
   cacheKey?: (i: Input) => any[];
-
-  /**
-   * Maximum number of cache entries to retain. See `ParamsWithInput`.
-   */
-  cacheSize?: number;
 
   /**
    * Loader function which must be provided for this parameter shape. It maps
@@ -99,11 +135,6 @@ export type ParamsWithLoader<Input, Response> = {
    * and cached according to the cache settings.
    */
   loader: (input: Input) => ObservableInput<Response>;
-
-  /**
-   * Operator used to map input -> response observable. Defaults to `switchMap`.
-   */
-  mapOperator?: TmapOperator;
 };
 
 export type OnlyInput<Input> = Observable<Input>;
@@ -414,13 +445,28 @@ export type StatefulObservableUtils<T = unknown, Error = unknown> = {
   ): StatefulObservable<T, unknown>;
 };
 
+export type StatefulObservableInfo = {
+  /**
+   * A name for the stateful observable, useful for debugging.
+   */
+  readonly name: string;
+  /**
+   * An index number of node that can be used to identify the order of creation
+   * among multiple stateful observables.
+   */
+  readonly index: number;
+
+  readonly [metaSymbol]?: unknown;
+};
+
 export type StatefulObservable<
   T = unknown,
   Error = unknown,
 > = StatefulObservableRaw<T, Error> &
   StatefulObservableStreams<T, Error> &
   StatefulObservableUtils<T, Error> &
-  StatefulObservableSubsribable<T>;
+  StatefulObservableSubsribable<T> &
+  StatefulObservableInfo;
 
 export type PipeRawOperator = {
   <Result, Error>(
