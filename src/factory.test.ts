@@ -1,9 +1,9 @@
-import { firstValueFrom } from 'rxjs';
-import { take, toArray } from 'rxjs/operators';
-import { statefulObservableFactory } from './factory';
+import { firstValueFrom } from "rxjs";
+import { take, toArray } from "rxjs/operators";
+import { statefulObservableFactory } from "./factory";
 
-describe('statefulObservableFactory', () => {
-  it('reuses statefulObservable instances for the same key (single request)', async () => {
+describe("statefulObservableFactory", () => {
+  it("reuses statefulObservable instances for the same key (single request)", async () => {
     let calls = 0;
     const factory = statefulObservableFactory<number, number>({
       loader: (id) => {
@@ -27,7 +27,36 @@ describe('statefulObservableFactory', () => {
     expect(calls).toBe(1);
   });
 
-  it('reset(false) clears cached observables without subscribers', async () => {
+  it("cleanup on absent subscribers", async () => {
+    let calls = 0;
+    const factory = statefulObservableFactory<number, number>({
+      loader: (id) => {
+        calls++;
+        return Promise.resolve(id * 2);
+      },
+      cacheKey: (i) => [i],
+    });
+
+    const s1 = factory.get(3);
+
+    const p1 = firstValueFrom(s1.value$.pipe(take(1)));
+
+    // wait a tick for initial values to arrive
+    const res1 = await p1;
+
+    const p2 = firstValueFrom(s1.value$.pipe(take(1)));
+
+    const res2 = await p2;
+
+    // each stream emitted two values (initial + reload)
+    expect(res1).toBe(6);
+    expect(res2).toBe(6);
+
+    // loader called once per initial subscription + once per reload per stream
+    expect(calls).toBe(2);
+  });
+
+  it("reset(false) clears cached observables without subscribers", async () => {
     let calls = 0;
     const factory = statefulObservableFactory<number, number>({
       loader: (id) => {
@@ -53,7 +82,7 @@ describe('statefulObservableFactory', () => {
     expect(calls).toBe(2);
   });
 
-  it('reload triggers reload on all cached observables', async () => {
+  it("reload triggers reload on all cached observables", async () => {
     let calls = 0;
     const factory = statefulObservableFactory<number, number>({
       loader: (id) => {

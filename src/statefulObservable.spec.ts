@@ -12,10 +12,10 @@ import {
   take,
   throwError,
   toArray,
-} from 'rxjs';
-import { errorSymbol, loadingSymbol } from './response-container';
-import { statefulObservable } from './statefulObservable';
-import { ResponseWithStatus } from './types';
+} from "rxjs";
+import { errorSymbol, loadingSymbol } from "./response-container";
+import { statefulObservable } from "./statefulObservable";
+import { ResponseWithStatus } from "./types";
 
 class SampleService {
   input = new ReplaySubject<number>(1);
@@ -36,14 +36,14 @@ class SampleService {
   }).pipeValue(switchMap((value) => this.makeRequest(value)));
 }
 
-describe('statefulObservable', () => {
+describe("statefulObservable", () => {
   afterEach(async () => {
     jest.clearAllMocks();
     await new Promise((r) => setTimeout(r, 5));
   });
 
-  describe('basic', () => {
-    it('bypass input', async () => {
+  describe("basic", () => {
+    it("bypass input", async () => {
       const store = statefulObservable({
         input: new BehaviorSubject(1),
       });
@@ -53,7 +53,7 @@ describe('statefulObservable', () => {
       expect(res).toEqual(1);
     });
 
-    it('bypass input raw', async () => {
+    it("bypass input raw", async () => {
       const store = statefulObservable({
         input: new BehaviorSubject(1),
       });
@@ -63,7 +63,7 @@ describe('statefulObservable', () => {
       expect(res).toEqual([{ state: loadingSymbol }, 1]);
     });
 
-    it('dont keep state without subscribers', async () => {
+    it("dont keep state without subscribers", async () => {
       const sampleService = new SampleService();
       sampleService.input.next(1);
 
@@ -78,7 +78,7 @@ describe('statefulObservable', () => {
       expect(res2).toEqual(2);
     });
 
-    it('pending flips during async operation', async () => {
+    it("pending flips during async operation", async () => {
       const sampleService = new SampleService();
       // subscribe to pending and collect two emissions: loading then not loading
       const pendingSeq$ = sampleService.store.pending$.pipe(take(2), toArray());
@@ -89,24 +89,24 @@ describe('statefulObservable', () => {
     });
   });
 
-  describe('error handling', () => {
-    it('input with error - raw', async () => {
+  describe("error handling", () => {
+    it("input with error - raw", async () => {
       const store = statefulObservable({
-        input: of('something').pipe(
+        input: of("something").pipe(
           switchMap(() => {
-            throw 'err';
+            throw "err";
           }),
         ),
       });
 
       const res = await firstValueFrom(store.raw$);
 
-      expect(res).toEqual({ state: errorSymbol, error: 'err' });
+      expect(res).toEqual({ state: errorSymbol, error: "err" });
     });
   });
 
-  describe('reload', () => {
-    it('reload triggers new request without changing input', async () => {
+  describe("reload", () => {
+    it("reload triggers new request without changing input", async () => {
       let counter = 0;
       const store = statefulObservable({
         input: new BehaviorSubject(1),
@@ -124,7 +124,7 @@ describe('statefulObservable', () => {
       expect(second).toEqual([1, 2]);
     });
 
-    it('reload triggers new request without changing input - raw values', async () => {
+    it("reload triggers new request without changing input - raw values", async () => {
       let counter = 0;
       const store = statefulObservable({
         input: new BehaviorSubject(1),
@@ -151,8 +151,8 @@ describe('statefulObservable', () => {
     });
   });
 
-  describe('recovery', () => {
-    it('new input triggers new request after error - raw', async () => {
+  describe("recovery", () => {
+    it("new input triggers new request after error - raw", async () => {
       let counter = 0;
       const input = new BehaviorSubject(1);
       const store = statefulObservable({
@@ -160,7 +160,7 @@ describe('statefulObservable', () => {
         loader: (value) => {
           if (counter === 0) {
             counter++;
-            return throwError(() => 'err7');
+            return throwError(() => "err7");
           }
           return of([value, ++counter] as [number, number]);
         },
@@ -179,20 +179,20 @@ describe('statefulObservable', () => {
 
       expect(results).toEqual([
         { state: loadingSymbol },
-        { state: errorSymbol, error: 'err7' },
+        { state: errorSymbol, error: "err7" },
         { state: loadingSymbol },
         [1, 2],
       ]);
     });
 
-    it('reload triggers new request after error - raw', async () => {
+    it("reload triggers new request after error - raw", async () => {
       let counter = 0;
       const store = statefulObservable({
         input: new BehaviorSubject(1),
         loader: (value) => {
           if (counter === 0) {
             counter++;
-            return throwError(() => 'err8');
+            return throwError(() => "err8");
           }
           return of([value, ++counter] as [number, number]);
         },
@@ -211,14 +211,14 @@ describe('statefulObservable', () => {
 
       expect(results).toEqual([
         { state: loadingSymbol },
-        { state: errorSymbol, error: 'err8' },
+        { state: errorSymbol, error: "err8" },
         { state: loadingSymbol },
         [1, 2],
       ]);
     });
   });
 
-  describe('cache', () => {
+  describe("cache", () => {
     let makeRequestMock = jest.fn(
       (value: number): Observable<number> =>
         defer(() => of(value).pipe(delay(1))),
@@ -231,13 +231,13 @@ describe('statefulObservable', () => {
       );
     });
 
-    it('validate mock', async () => {
+    it("validate mock", async () => {
       expect(await firstValueFrom(makeRequestMock(1))).toEqual(1);
 
       expect(makeRequestMock.mock.calls.length).toEqual(1);
     });
 
-    it('validate mock 2', async () => {
+    it("validate mock 2", async () => {
       const sourceInput = new BehaviorSubject(1);
       const store = statefulObservable({
         input: sourceInput,
@@ -248,7 +248,7 @@ describe('statefulObservable', () => {
       expect(await firstValueFrom(store.value$)).toEqual(1);
     });
 
-    it('use internal cache if cacheKey provided', async () => {
+    it("use internal cache if cacheKey provided", async () => {
       const sourceInput = new BehaviorSubject(1);
       const store = statefulObservable({
         input: sourceInput,
@@ -272,7 +272,7 @@ describe('statefulObservable', () => {
       expect(makeRequestMock.mock.calls.length).toEqual(2);
     });
 
-    it('reset internal cache on reload', async () => {
+    it("reset internal cache on reload", async () => {
       const sourceInput = new BehaviorSubject(1);
       const store = statefulObservable({
         input: sourceInput,

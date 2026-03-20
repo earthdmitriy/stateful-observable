@@ -9,14 +9,14 @@ import {
   merge,
   of,
   shareReplay,
-  startWith
-} from 'rxjs';
+  startWith,
+} from "rxjs";
 import {
   errorSymbol,
   isError,
   isSuccess,
   loadingSymbol,
-} from './response-container';
+} from "./response-container";
 import {
   PipeErrorOperator,
   PipeRawOperator,
@@ -24,7 +24,7 @@ import {
   ResponseError,
   ResponseLoading,
   ResponseWithStatus,
-} from './types';
+} from "./types";
 
 /**
  * RxJS operator that catches any error from the upstream observable and

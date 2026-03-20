@@ -1,4 +1,5 @@
 import {
+  InteropObservable,
   MonoTypeOperatorFunction,
   Observable,
   ObservableInput,
@@ -37,7 +38,7 @@ export type LogFnWithInput<Input, Response> = (
   index: number,
 ) => void;
 
-export type LogFn<Response,Error> = (
+export type LogFn<Response, Error> = (
   value: FlatResponseContainer<Response, Error>,
   name: string,
   index: number,
@@ -193,6 +194,8 @@ export type StatefulObservableRaw<T = unknown, Error = unknown> = {
  */
 export type StatefulObservableStreams<T = unknown, Error = unknown> = {
   /**
+   * @deprecated since statufulObservable have own subscribe and implements InteropObservable - here is no reason to have separate value$ stream
+   *
    * Successful values only (filters out loading/error sentinels).
    *
    * Template (async pipe):
@@ -459,14 +462,23 @@ export type StatefulObservableInfo = {
   readonly [metaSymbol]?: unknown;
 };
 
+// some functions (firstValueFrom for example) expect exact Observable (not even InteropObservable)
+// so we mimic it
+export type MimicObservable<T> = Omit<
+  InstanceType<typeof Observable<T>>,
+  "pipe"
+>;
+
 export type StatefulObservable<
   T = unknown,
   Error = unknown,
 > = StatefulObservableRaw<T, Error> &
   StatefulObservableStreams<T, Error> &
+  MimicObservable<T> & // order matters, StatefulObservableUtils should override signature of pipe
   StatefulObservableUtils<T, Error> &
   StatefulObservableSubsribable<T> &
-  StatefulObservableInfo;
+  StatefulObservableInfo &
+  InteropObservable<T>;
 
 export type PipeRawOperator = {
   <Result, Error>(

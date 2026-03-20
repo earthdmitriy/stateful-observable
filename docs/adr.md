@@ -303,6 +303,9 @@ const relatedData = data.pipeValue(
 
 `#1` is the index in the chain; it indicates which node of the transformation chain failed.
 
+### Deprecate value$ output stream
+Since `subscribe` was added directly on the `statefulObservable` instance plus `InteropObservable` were implemented, there is no reason to subscribe onto `value$` to receive data.
+
 # To Be Determined
 
 ## Set Caching Strategy on Initialization?
@@ -331,5 +334,3 @@ const data = stream.pipeValue(map(processValue));
 const data = stream.mapValue(processValue);
 ```
 
-## Deprecate value$ output stream
-Since `subscribe` was added directly on the `statefulObservable` instance, there is no reason to subscribe to `value$` to receive data.

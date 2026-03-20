@@ -1,6 +1,8 @@
-import { Observable } from 'rxjs';
-import { isError, isLoading, isSuccess } from './response-container';
-import { ObserverWithPending, ResponseWithStatus } from './types';
+import { Observable, Subscribable } from "rxjs";
+import { isError, isLoading, isSuccess } from "./response-container";
+import { ObserverWithPending, ResponseWithStatus } from "./types";
+
+type ExtendedSubscribable<T> = Subscribable<T>["subscribe"];
 
 export const makeSubscribe =
   <Result>(observable: Observable<ResponseWithStatus<Result>>) =>
@@ -11,7 +13,7 @@ export const makeSubscribe =
   ) => {
     if (!observerOrNext) return observable.subscribe;
 
-    if (typeof observerOrNext === 'function') {
+    if (typeof observerOrNext === "function") {
       const subscription = observable.subscribe({
         next: (rawValue) => {
           if (isSuccess(rawValue)) {

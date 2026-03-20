@@ -7,7 +7,12 @@ import {
   loadingSymbol,
   metaSymbol,
 } from "./response-container";
-import { MetaInfo, ResponseError, ResponseLoading, StatefulObservable } from "./types";
+import {
+  MetaInfo,
+  ResponseError,
+  ResponseLoading,
+  StatefulObservable,
+} from "./types";
 
 type UnwrapStatefulObservable<T> =
   T extends StatefulObservable<infer U> ? U : never;
@@ -37,7 +42,7 @@ export const combineStatefulObservables = <
   Result,
 >(
   args: [...T],
-  mapCombinedValue: (data: UnwrapStatefulObservables<T>) => Result
+  mapCombinedValue: (data: UnwrapStatefulObservables<T>) => Result,
 ): StatefulObservable<Result, UnwrapStatefulObservablesError<T>> =>
   fillStatefulObservable({
     raw: combineLatest(args.map((s) => s.raw$)).pipe(
@@ -50,10 +55,10 @@ export const combineStatefulObservables = <
             error: events.map((x) => (isError(x) ? x.error : false)),
           } as ResponseError<UnwrapStatefulObservablesError<T>>;
         return mapCombinedValue(events as UnwrapStatefulObservables<T>);
-      })
+      }),
     ),
-    name: `[${args.map((({name})=>name)).join(", ")}]`,
-    meta: args.flatMap(a => a[metaSymbol] as MetaInfo[] ),
+    name: `[${args.map(({ name }) => name).join(", ")}]`,
+    meta: args.flatMap((a) => a[metaSymbol] as MetaInfo[]),
     index: -1, // will be incremented to 0 in fillStatefulObservable
     reload: () => args.forEach((store) => store.reload()),
   });

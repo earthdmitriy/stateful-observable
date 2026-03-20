@@ -18,6 +18,10 @@ import {
   StatefulObservable,
 } from "./types";
 
+// polyfill for InteropObservable
+const observable = (() =>
+  (typeof Symbol === "function" && Symbol.observable) || "@@observable")();
+
 export const fillStatefulObservable = <Result, Error>({
   raw,
   name,
@@ -51,6 +55,8 @@ export const fillStatefulObservable = <Result, Error>({
       });
 
   const cachedRaw$ = raw.pipe(sideEffect, defaultCache());
+
+  const subscribe = makeSubscribe(cachedRaw$);
 
   return {
     raw$: cachedRaw$,
@@ -101,6 +107,9 @@ export const fillStatefulObservable = <Result, Error>({
         reload,
       }),
 
-    subscribe: makeSubscribe(cachedRaw$),
+    subscribe,
+    [observable]: () => ({
+      subscribe,
+    }),
   } as unknown as StatefulObservable<Result, Error>;
 };

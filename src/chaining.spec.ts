@@ -2,6 +2,7 @@ import { BehaviorSubject, firstValueFrom, of, Subject, throwError } from "rxjs";
 import {
   delay,
   map,
+  mergeMap,
   shareReplay,
   switchMap,
   take,
@@ -81,7 +82,7 @@ describe("chaining / fillStatefulObservable", () => {
       const store = statefulObservable({
         input: new BehaviorSubject(1),
       }).pipeValue(map((v) => v + 10));
-      const res = await firstValueFrom(store.value$);
+      const res = await firstValueFrom(store);
 
       expect(res).toEqual(11);
     });
@@ -94,7 +95,7 @@ describe("chaining / fillStatefulObservable", () => {
         delay(1),
       );
 
-      const res = await firstValueFrom(store.value$);
+      const res = await firstValueFrom(store);
 
       expect(res).toEqual(11);
     });
@@ -246,13 +247,13 @@ describe("chaining / fillStatefulObservable", () => {
         .pipe(shareReplay(1));
 
       // first request triggered by subscribing to value
-      const first = await firstValueFrom(store.value$);
+      const first = await firstValueFrom(store);
       expect(first).toEqual([1, 1]);
 
       // trigger reload explicitly and expect a new request
       store.reload();
       await new Promise((r) => setTimeout(r, 5)); // wait for async operations
-      const second = await firstValueFrom(store.value$);
+      const second = await firstValueFrom(store);
       expect(second).toEqual([1, 2]);
     });
 
@@ -311,14 +312,40 @@ describe("chaining / fillStatefulObservable", () => {
       store.reload();
       await new Promise((r) => setTimeout(r, 5)); // wait for async operations
 
-      console.error(results);
-
       expect(results).toEqual([
         { state: loadingSymbol },
         { state: errorSymbol, error: "err8" },
         { state: loadingSymbol },
         [1, 2],
       ]);
+    });
+  });
+
+  describe("interop", () => {
+    it("can be passed into common rxjs operators", async () => {
+      const store = statefulObservable({
+        input: new BehaviorSubject(1),
+      });
+
+      const res = await firstValueFrom(of(1).pipe(mergeMap(() => store)));
+
+      expect(res).toEqual(1);
+    });
+
+    it("don't allow passing common operators into pipe", async () => {
+      const store = statefulObservable({
+        input: new BehaviorSubject(1),
+      }).pipe(
+        // @ts-expect-error
+        map((x) => x.toString()),
+        map((x) => +x),
+      );
+
+      const res = await firstValueFrom(store);
+
+      // TODO find better way to check it
+      // +({ state: loadingSymbol }) returns NaN
+      expect(res).toEqual(NaN);
     });
   });
 });
