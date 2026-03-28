@@ -1,4 +1,4 @@
-import { ObservableInput, of, Subject, takeUntil, tap } from "rxjs";
+import { Observable, ObservableInput, of, Subject, takeUntil, tap } from "rxjs";
 import { createCache } from "./cache";
 import { statefulObservable } from "./statefulObservable";
 import { StatefulObservable, TmapOperator } from "./types";
@@ -59,6 +59,20 @@ export const statefulObservableFactory = <Input, Response>(params: {
    * and cached according to the cache settings.
    */
   loader: (input: Input) => ObservableInput<Response>;
+
+  /**
+   * Option to temporary shut down observable.
+   * While `false` (inactive) statefule observable will keep all subscriptions alive, but wan't emit any events on them
+   * Use it temporarily disable dataflow in case if user logged out, auth token expired and waiting for renewal, or sometging else.
+   */
+  active?: Observable<boolean>;
+
+  /**
+   * Optional refCount.
+   * Default: true
+   */
+  refCount?: boolean;
+
   /**
    * Function to generate a cache key from an input. If not provided, the input itself
    * will be used as the cache key.
@@ -66,6 +80,7 @@ export const statefulObservableFactory = <Input, Response>(params: {
    * @returns
    */
   cacheKey?: (i: Input) => any[];
+
   /**
    * Maximum number of cache entries to retain. See `ParamsWithInput`.
    */
@@ -77,7 +92,7 @@ export const statefulObservableFactory = <Input, Response>(params: {
   mapOperator?: TmapOperator;
 }): StatefulObservableFactory<Input, Response> => {
   const cache = createCache<[StatefulObservable<Response>, number]>(
-    params.cacheSize ?? 42,
+    params.cacheSize ?? 42
   );
   const complete$ = new Subject<void>();
 
@@ -91,6 +106,8 @@ export const statefulObservableFactory = <Input, Response>(params: {
           input: of(input),
           loader: params.loader,
           mapOperator: params.mapOperator,
+          active: params.active,
+          refCount: params.refCount,
         }).pipe(
           takeUntil(complete$),
           tap({
@@ -100,7 +117,7 @@ export const statefulObservableFactory = <Input, Response>(params: {
             unsubscribe: () => {
               activeSubscriptions--;
             },
-          }),
+          })
         );
         cache.set(key, [stream, activeSubscriptions]);
         return stream;

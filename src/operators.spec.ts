@@ -1,5 +1,13 @@
 import { defer, lastValueFrom, of, throwError } from "rxjs";
-import { concatMap, delay, map, switchMap, toArray } from "rxjs/operators";
+import {
+  concatMap,
+  delay,
+  map,
+  mergeMap,
+  switchMap,
+  tap,
+  toArray,
+} from "rxjs/operators";
 import {
   catchResponseError,
   defaultCache,
@@ -60,6 +68,7 @@ describe("statefulObservable operators", () => {
       const arr = await lastValueFrom(piped$.pipe(toArray()));
       expect(arr).toEqual([{ state: loadingSymbol }, "ok!"]);
     });
+
     it("async", async () => {
       const raw$ = of({ state: loadingSymbol }, "ok");
 
@@ -70,6 +79,7 @@ describe("statefulObservable operators", () => {
       const arr = await lastValueFrom(piped$.pipe(toArray()));
       expect(arr).toEqual([{ state: loadingSymbol }, "ok!"]);
     });
+
     it("with error", async () => {
       const raw$ = of({ state: loadingSymbol }, "ok");
 
@@ -83,6 +93,7 @@ describe("statefulObservable operators", () => {
         { state: errorSymbol, error: "err" },
       ]);
     });
+
     it("error recovery - validate test", async () => {
       const raw$ = of("not ok", "ok");
 
@@ -100,6 +111,7 @@ describe("statefulObservable operators", () => {
       const arr = await lastValueFrom(piped$.pipe(toArray()));
       expect(arr).toEqual([{ state: errorSymbol, error: "err" }, "ok!"]);
     });
+
     it("error recovery", async () => {
       const raw$ = of("not ok", "ok");
 
@@ -113,6 +125,27 @@ describe("statefulObservable operators", () => {
 
       const arr = await lastValueFrom(piped$.pipe(toArray()));
       expect(arr).toEqual([{ state: errorSymbol, error: "err" }, "ok!"]);
+    });
+
+    it("switch on new event", async () => {
+      const raw$ = of(0, 1, 2, 3);
+
+      const done: Boolean[] = [];
+
+      const piped$ = raw$.pipe(
+        pipeValue(
+          mergeMap((v) =>
+            of(v).pipe(
+              delay(1),
+              tap(() => (done[v] = true)),
+            ),
+          ),
+        ),
+      );
+
+      const arr = await lastValueFrom(piped$);
+      expect(done).toEqual([, , , true]);
+      expect(arr).toEqual(3);
     });
   });
 });

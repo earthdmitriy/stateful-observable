@@ -303,14 +303,26 @@ const relatedData = data.pipeValue(
 
 `#1` is the index in the chain; it indicates which node of the transformation chain failed.
 
-### Deprecate value$ output stream
+
+## Full RxJs interop
+
+While having `subsribe` is enough to work with async pipe and toSignal in Angular, `statefulObservable` can't be passed into high-order RxJs operators and things like firstValueFrom don't accept `statefulObservable` because they require Observable or InteropObservable.
+
+Pros:
+- Easier integration with existing RxJs code
+
+Cons:
+- Unfortunately `statefulObservable` need to implement interface InteropObservable and mimic class Observable.
+
+### Decision:
+- Done
+
+## Deprecate value$ output stream
 Since `subscribe` was added directly on the `statefulObservable` instance plus `InteropObservable` were implemented, there is no reason to subscribe onto `value$` to receive data.
 
-# To Be Determined
+### Decision:
+- Done
 
-## Set Caching Strategy on Initialization?
-
-This would allow piped successors to reuse it without needing to write `shareReplay(1)` again.
 
 ## Reimplement `active$` stream from `tinyRxStore` for nested cache invalidation
 
@@ -319,6 +331,36 @@ Pros:
 
 Cons:
 - Is this a common use case?
+- Will need to pass additional `active$` stream through entire chain and use in `combine` logic
+
+### Decision:
+- Not worth it, with chaining it add much more complexity than profit
+
+## Reimplement `active$` with additional event type in `raw` stream
+
+Previously here was 3 types of events: value, error and pending in `raw` stream. Techincally `sleeping` state can be implemented by pushing `loading` event through the chain. It has highest priority and will push value and error out of the data stream effectively invalidating cache and putting stream into kind of `sleeping` state. It seems to be simple enough because don don't require passing addtional stream through the chain. Although subsribers of `pending$` stream will be notified that something is going on, that's, techincally, not true.
+
+But it can be avoided with additional event type (let's name it `inactive`) with priority even higher than `pending` event. It will push any other events out of cache, but won't be passed into actual subscriptions. Therefore goal can be achived - stream can become inactive while keeping its subscriptions.
+
+Pros:
+- Seems to be more elegant solution than additional `active$` stream - new event will push last value out of the `raw` stream cleaning its state
+- No additional subscription management like in `publishWhile` operator
+
+Cons:
+- Additional conditions in `value$`,`pending$` and `error$` streams, as well as in `subscribe`
+- Behavior of `pipeValue(mergeMap(()) => anotherStream)` should be amended. `statefulObservable` should ignore any events in pipes when parent node is `inacative`
+
+### Decision:
+- Implemented
+
+## Set Caching Strategy on Initialization?
+
+This would allow piped successors to reuse it without needing to write `shareReplay(1)` again.
+
+### Decision:
+- Implemented as optional `refCount` parameter
+
+# To Be Determined
 
 ## More shorthands
 
@@ -334,3 +376,35 @@ const data = stream.pipeValue(map(processValue));
 const data = stream.mapValue(processValue);
 ```
 
+## In subscribe.next emit null on error
+
+Pros:
+In case if user ignore recommendation to use stateful container
+```typescript
+@if (stream.error$ | async) {
+  Error
+} @else {
+  @if (stream$ | async; as value) {
+    {{ value }}
+  }
+}
+```
+can be replaced with
+```typescript
+@if (stream.error$ | async) {
+  Error
+} 
+@if (stream$ | async; as value) {
+  {{ value }}
+}
+```
+shorter, no nesting
+
+Cons:
+- Since implementation of InteropObservable generic parameter of type should represent actual type of value in subscribe
+  - StatefulObservable<string> should satisfy Observable<string>, but with null it should be  Observable<string | number>
+- possible intersection with null as user-defined possible value
+- it is only QoL change
+
+Possible solution:
+- add null as possible value into value$ stream. Since it's common Observable its type can be defined as Observable<Value | null>

@@ -1,4 +1,11 @@
-import { BehaviorSubject, firstValueFrom, of, Subject, throwError } from "rxjs";
+import {
+  BehaviorSubject,
+  firstValueFrom,
+  from,
+  of,
+  Subject,
+  throwError,
+} from "rxjs";
 import {
   delay,
   map,
@@ -8,7 +15,7 @@ import {
   take,
   toArray,
 } from "rxjs/operators";
-import { fillStatefulObservable } from "./chaining";
+import { fillStatefulObservable } from "./fillStatefulObservable";
 import { errorSymbol, loadingSymbol } from "./response-container";
 import { statefulObservable } from "./statefulObservable";
 import { ResponseWithStatus } from "./types";
@@ -24,6 +31,7 @@ describe("chaining / fillStatefulObservable", () => {
         meta: [],
         index: 0,
         reload: () => {},
+        refCount: true,
       });
 
       const rawValues = await firstValueFrom(so.raw$.pipe(take(2), toArray()));
@@ -36,7 +44,7 @@ describe("chaining / fillStatefulObservable", () => {
       expect(err).toEqual(false);
 
       const pending = await firstValueFrom(
-        so.pending$.pipe(take(2), toArray()),
+        so.pending$.pipe(take(2), toArray())
       );
       // last emission of pending for this raw is false (since 'ok' is success)
       expect(pending).toEqual([true, false]);
@@ -50,6 +58,7 @@ describe("chaining / fillStatefulObservable", () => {
         meta: [],
         index: 0,
         reload: () => {},
+        refCount: true,
       });
 
       const piped = so.pipeValue(map((v: string) => v + "!") as any);
@@ -60,7 +69,7 @@ describe("chaining / fillStatefulObservable", () => {
     it("pipeError transforms error values and preserves non-error emissions", async () => {
       const raw$ = of(
         { state: loadingSymbol },
-        { state: errorSymbol, error: "err1" },
+        { state: errorSymbol, error: "err1" }
       );
       const so = fillStatefulObservable({
         raw: raw$,
@@ -68,6 +77,7 @@ describe("chaining / fillStatefulObservable", () => {
         meta: [],
         index: 0,
         reload: () => {},
+        refCount: true,
       });
 
       const transformed = so.pipeError(map((e: any) => e + "X") as any);
@@ -92,7 +102,7 @@ describe("chaining / fillStatefulObservable", () => {
         input: new BehaviorSubject(1),
       }).pipeValue(
         switchMap((v) => of(v + 10)),
-        delay(1),
+        delay(1)
       );
 
       const res = await firstValueFrom(store);
@@ -132,7 +142,7 @@ describe("chaining / fillStatefulObservable", () => {
         map((v) => +v),
         map((v) => v.toString()),
         map((v) => +v),
-        map((v) => "piped " + v),
+        map((v) => "piped " + v)
       );
 
       input.next(1);
@@ -149,7 +159,7 @@ describe("chaining / fillStatefulObservable", () => {
         input: of(1).pipe(
           map(() => {
             throw "err2";
-          }),
+          })
         ),
       }).pipeError(map((e) => e + "1"));
 
@@ -174,7 +184,7 @@ describe("chaining / fillStatefulObservable", () => {
       }).pipeValue(
         switchMap((value) => {
           throw value.toString();
-        }),
+        })
       );
 
       const storeWithErrorHandling = store.pipeError(
@@ -182,7 +192,7 @@ describe("chaining / fillStatefulObservable", () => {
           if (error === "1") return 1;
           if (error === "2") return 2;
           return error;
-        }),
+        })
       );
 
       const res = await firstValueFrom(store.error$);
@@ -212,7 +222,7 @@ describe("chaining / fillStatefulObservable", () => {
         input: new BehaviorSubject(1),
       }).pipeValue(
         delay(1),
-        switchMap(() => throwError(() => "err5")),
+        switchMap(() => throwError(() => "err5"))
       );
 
       const res = await firstValueFrom(store.raw$.pipe(take(2), toArray()));
@@ -242,7 +252,7 @@ describe("chaining / fillStatefulObservable", () => {
       })
         .pipeValue(
           switchMap((value) => of([value, ++counter])),
-          delay(1),
+          delay(1)
         )
         .pipe(shareReplay(1));
 
@@ -263,7 +273,7 @@ describe("chaining / fillStatefulObservable", () => {
         input: new BehaviorSubject(1),
       }).pipeValue(
         switchMap((value) => of([value, ++counter] as [number, number])),
-        delay(1),
+        delay(1)
       );
 
       const results: ResponseWithStatus<[number, number], unknown>[] = [];
@@ -298,7 +308,7 @@ describe("chaining / fillStatefulObservable", () => {
             return throwError(() => "err8");
           }
           return of([value, ++counter] as [number, number]);
-        }),
+        })
       );
 
       const results: ResponseWithStatus<[number, number], unknown>[] = [];
@@ -332,13 +342,55 @@ describe("chaining / fillStatefulObservable", () => {
       expect(res).toEqual(1);
     });
 
+    it("supports subscribe(next) and observer object like a plain Observable", async () => {
+      const store = statefulObservable({
+        input: of(1),
+      });
+
+      const byNext = await new Promise<number>((resolve) =>
+        // next-only callback
+        store.subscribe((v) => resolve(v))
+      );
+
+      expect(byNext).toEqual(1);
+
+      const byObserver = await new Promise<number>((resolve) =>
+        // observer object with next/error/complete
+        store.subscribe({
+          next: (v) => resolve(v),
+        })
+      );
+
+      expect(byObserver).toEqual(1);
+    });
+
+    it("forEach resolves for finite sources and iterates success values", async () => {
+      const store = statefulObservable({ input: of(1) });
+      const values: number[] = [];
+
+      // following don't work because statefulObservable intended to never complete
+      // await store.forEach((v) => values.push(v as number));
+
+      store.forEach((v) => values.push(v as number));
+
+      await new Promise((r) => setTimeout(r, 5)); // wait for async operations
+
+      expect(values).toEqual([1]);
+    });
+
+    it("is compatible with from(...) / Symbol.observable interop", async () => {
+      const store = statefulObservable({ input: of(1) });
+      const res = await firstValueFrom(from(store));
+      expect(res).toEqual(1);
+    });
+
     it("don't allow passing common operators into pipe", async () => {
       const store = statefulObservable({
         input: new BehaviorSubject(1),
       }).pipe(
         // @ts-expect-error
         map((x) => x.toString()),
-        map((x) => +x),
+        map((x) => +x)
       );
 
       const res = await firstValueFrom(store);

@@ -1,8 +1,6 @@
-import { Observable, Subscribable } from "rxjs";
+import { Observable } from "rxjs";
 import { isError, isLoading, isSuccess } from "./response-container";
 import { ObserverWithPending, ResponseWithStatus } from "./types";
-
-type ExtendedSubscribable<T> = Subscribable<T>["subscribe"];
 
 export const makeSubscribe =
   <Result>(observable: Observable<ResponseWithStatus<Result>>) =>

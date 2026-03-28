@@ -344,9 +344,21 @@ Or create new issue https://github.com/earthdmitriy/stateful-observable/issues
 
 0.4.0
 - `statefulObservable` implements InteropObservable
-  - it mean that `statefulObservable` can be used everywhere where rxjs expect Observable as input, e.g. merge, combineLatest, high-order operators
+  - it mean that `statefulObservable` can be used everywhere where rxjs expect Observable as input, e.g. merge, combineLatest, firstValueFrom, high-order operators
   - resulting observable won't provide benefits from `statefulObservable`, but it might be useful for interop with existing code
 - `value$` deprecated - since statufulObservable have own subscribe and implements InteropObservable - here is no reasons to have separate value$ stream
+- changed internal behavior of pipes
+  - when new input value arrives current processing chain will be unsubscribed
+  - should prevent rare race conditions when outdated projected data overrides more recent projected data
+- `active` input parameter - if provided and emits `false` - `statefulObservable` will be temporarily disabled
+  - it will cleanup all internal data
+  - and won't emit any event until `active` become `true`
+  - while keeping all subcriptions alive
+- `refCount` input parameter
+  - by default `true`
+  - can be set to `false` to prevent cleanup in shared streams
+  - chained nodes will inherit `refCount` of parent
+  - `combineStatefulObservables` prioritize `refCount: true` in sources
 
 0.3.0
 - `statefulObservable` will log errors in pipes with `console.error` so errors aren't unintentionally muted

@@ -2,6 +2,7 @@ import { filter, map, Observable, tap } from "rxjs";
 import { defaultCache, pipeError, pipeRaw, pipeValue } from "./operators";
 import {
   isError,
+  isInactive,
   isLoading,
   isSuccess,
   metaSymbol,
@@ -22,6 +23,10 @@ import {
 const observable = (() =>
   (typeof Symbol === "function" && Symbol.observable) || "@@observable")();
 
+/*
+ * Internal function.
+ * Takes raw stream and additional params and makes public instance of statefulObservable
+ */
 export const fillStatefulObservable = <Result, Error>({
   raw,
   name,
@@ -29,6 +34,7 @@ export const fillStatefulObservable = <Result, Error>({
   log,
   index: prevIndex,
   reload,
+  refCount,
 }: {
   raw: Observable<ResponseWithStatus<Result, Error>>;
   name: string;
@@ -36,25 +42,28 @@ export const fillStatefulObservable = <Result, Error>({
   index: number;
   log?: LogFn<Result, Error>;
   reload: () => void;
+  refCount: boolean;
 }): StatefulObservable<Result, Error> => {
   const index = prevIndex + 1;
 
   const sideEffect = log
     ? tap<ResponseWithStatus<Result, Error>>(
         (value) =>
-          !isLoading(value) && log(flattenResponse(value), name, index),
+          !isLoading(value) &&
+          !isInactive(value) &&
+          log(flattenResponse(value), name, index)
       )
     : tap<ResponseWithStatus<Result, Error>>((value) => {
         if (isError(value) && !meta.some((m) => m.errorSubscriptions)) {
           // Log errors even if they are filtered out later, but only if there are active error subscribers
           console.error(
             `Unhandled error in statefulObservable '${name} #${index}'\nSubscribe to the 'error$' stream to handle and silence these errors.\nError details:`,
-            value.error,
+            value.error
           );
         }
       });
 
-  const cachedRaw$ = raw.pipe(sideEffect, defaultCache());
+  const cachedRaw$ = raw.pipe(sideEffect, defaultCache(refCount));
 
   const subscribe = makeSubscribe(cachedRaw$);
 
@@ -75,10 +84,13 @@ export const fillStatefulObservable = <Result, Error>({
           meta.forEach((m) => m.errorSubscriptions--);
         },
       }),
-      filter((e) => !isLoading(e)),
-      map((e) => (isError(e) ? (e.error as Error) : false)),
+      filter((e) => !isLoading(e) && !isInactive(e)),
+      map((e) => (isError(e) ? (e.error as Error) : false))
     ),
-    pending$: cachedRaw$.pipe(map(isLoading)),
+    pending$: cachedRaw$.pipe(
+      filter((e) => !isInactive(e)),
+      map(isLoading)
+    ),
 
     pipe: (...args: Parameters<PipeRawOperator>) =>
       fillStatefulObservable({
@@ -87,6 +99,7 @@ export const fillStatefulObservable = <Result, Error>({
         meta,
         index,
         reload,
+        refCount,
       }),
 
     pipeValue: (...args: Parameters<PipeValueOperator>) =>
@@ -96,6 +109,7 @@ export const fillStatefulObservable = <Result, Error>({
         meta,
         index,
         reload,
+        refCount,
       }),
 
     pipeError: (...args: Parameters<PipeErrorOperator>) =>
@@ -105,11 +119,15 @@ export const fillStatefulObservable = <Result, Error>({
         meta,
         index,
         reload,
+        refCount,
       }),
 
     subscribe,
     [observable]: () => ({
       subscribe,
     }),
+
+    forEach: (next: (value: Result) => void) =>
+      cachedRaw$.forEach((x) => isSuccess(x) && next(x)),
   } as unknown as StatefulObservable<Result, Error>;
 };

@@ -8,10 +8,19 @@ import {
   OperatorFunction,
   Unsubscribable,
 } from "rxjs";
-import { errorSymbol, loadingSymbol, metaSymbol } from "./response-container";
+import {
+  errorSymbol,
+  inactiveSymbol,
+  loadingSymbol,
+  metaSymbol,
+} from "./response-container";
 
 export type ResponseLoading = {
   state: typeof loadingSymbol;
+};
+
+export type ResponseInactive = {
+  state: typeof inactiveSymbol;
 };
 
 export type ResponseError<E = unknown> = {
@@ -20,6 +29,7 @@ export type ResponseError<E = unknown> = {
 };
 
 export type ResponseWithStatus<T, E = unknown> =
+  | ResponseInactive
   | ResponseLoading
   | ResponseError<E>
   | T;
@@ -44,13 +54,20 @@ export type LogFn<Response, Error> = (
   index: number,
 ) => void;
 
-export type MetaInfo = { errorSubscriptions: number };
+export type MetaInfo = { errorSubscriptions: number, refCount: boolean };
 
 export type TmapOperator = <T, O extends ObservableInput<any>>(
   project: (value: T, index: number) => O,
 ) => OperatorFunction<T, ObservedValueOf<O>>;
 
 export type CommonParams<Input, Response> = {
+  /**
+   * Option to temporary shut down observable.
+   * While `false` (inactive) statefule observable will keep all subscriptions alive, but wan't emit any events on them
+   * Use it temporarily disable dataflow in case if user logged out, auth token expired and waiting for renewal, or sometging else.
+   */
+  active?: Observable<boolean>;
+
   /**
    * Maximum number of entries to keep in the internal cache. Defaults to the
    * value supplied by the factory (42 in the implementation).
@@ -73,6 +90,12 @@ export type CommonParams<Input, Response> = {
    * Optional logging hooks called for each value.
    */
   log?: LogFnWithInput<Input, Response>;
+
+  /**
+   * Optional refCount.
+   * Default: true
+   */
+  refCount?: boolean;
 };
 
 /**
@@ -166,14 +189,14 @@ export type StatefulObservableRaw<T = unknown, Error = unknown> = {
    *
    * @remarks you should usually prefer `value$` / `error$` / `pending$` streams
    * */
-  raw$: Observable<ResponseWithStatus<T, Error>>;
+  readonly raw$: Observable<ResponseWithStatus<T, Error>>;
 
   /**
    * Trigger to manually refresh/reload the current input.
    *
    * @remarks useful for error recovery or force re-evaluation of the loader (and following operators in `pipeValue`) without changing the input.
    * */
-  reload: () => void;
+  readonly reload: () => void;
 };
 
 /**
@@ -205,7 +228,7 @@ export type StatefulObservableStreams<T = unknown, Error = unknown> = {
    * }
    * ```
    */
-  value$: Observable<T>;
+  readonly value$: Observable<T>;
 
   /**
    * Error payloads or `false` when there is no error.
@@ -220,7 +243,7 @@ export type StatefulObservableStreams<T = unknown, Error = unknown> = {
    *   }
    * }
    */
-  error$: Observable<false | Error>;
+  readonly error$: Observable<false | Error>;
 
   /**
    * Boolean loading indicator — `true` while a loader is in-flight.
@@ -230,7 +253,7 @@ export type StatefulObservableStreams<T = unknown, Error = unknown> = {
    * <div [class.loading]="stream.pending$ | async">...</div>
    * ```
    */
-  pending$: Observable<boolean>;
+  readonly pending$: Observable<boolean>;
 };
 
 export type ObserverWithPending<T = unknown> = Partial<Observer<T>> & {

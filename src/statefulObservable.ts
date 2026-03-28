@@ -2,6 +2,7 @@ import {
   BehaviorSubject,
   combineLatest,
   from,
+  iif,
   isObservable,
   map,
   merge,
@@ -12,20 +13,21 @@ import {
   tap,
 } from "rxjs";
 import { createCache } from "./cache";
-import { fillStatefulObservable } from "./chaining";
+import { fillStatefulObservable } from "./fillStatefulObservable";
 import { catchResponseError, mapToLoading } from "./operators";
-import { isError } from "./response-container";
+import { inactiveSymbol, isError } from "./response-container";
 import {
   FlatResponseContainer,
   ParamsWithInput,
   ParamsWithLoader,
   ResponseError,
+  ResponseInactive,
   StatefulObservable,
   StatefulObservableParams,
 } from "./types";
 
 const expandInput = <Input, Response>(
-  params: StatefulObservableParams<Input, Response>,
+  params: StatefulObservableParams<Input, Response>
 ): ParamsWithInput<Input, Response> | ParamsWithLoader<Input, Response> => {
   if (typeof params === "function") return { loader: params };
   if (isObservable(params)) return { input: params };
@@ -33,7 +35,7 @@ const expandInput = <Input, Response>(
 };
 
 export const flattenResponse = <Response, Error>(
-  response: ResponseError<Error> | Response,
+  response: ResponseError<Error> | Response
 ): FlatResponseContainer<Response, Error> => {
   if (isError(response)) {
     return { error: response.error };
@@ -103,16 +105,18 @@ export const flattenResponse = <Response, Error>(
  * @see https://github.com/earthdmitriy/stateful-observable/blob/main/docs/recipes.md
  */
 export const statefulObservable = <Input, Response = Input>(
-  options: StatefulObservableParams<Input, Response>,
+  options: StatefulObservableParams<Input, Response>
 ): StatefulObservable<Response, unknown> => {
   const {
     input,
+    active,
     loader,
     mapOperator = switchMap,
     cacheKey = () => [] as never[], // falsy cache key will skip caching
     cacheSize = 42,
     name = "unnamed",
     log,
+    refCount = true,
   } = expandInput(options);
 
   const source$ = input ?? of(true as Input);
@@ -120,7 +124,7 @@ export const statefulObservable = <Input, Response = Input>(
 
   const loading$ = combineLatest([source$, cache$]).pipe(
     mapToLoading(),
-    catchResponseError(),
+    catchResponseError()
   ); // source can throw errors too
 
   const makeObservableInput = (input: Input) =>
@@ -144,17 +148,27 @@ export const statefulObservable = <Input, Response = Input>(
         tap({
           next: (result) => cache.set(key, result),
         }),
-        catchResponseError(),
+        catchResponseError()
       );
     }),
     catchResponseError(),
     tap((raw) => {
       if (log) log(flattenResponse(raw), name, 0);
-    }),
+    })
   );
 
-  const raw = merge(loading$, valueOrError$);
-  const meta = [{ errorSubscriptions: 0 }];
+  const raw = active
+    ? active.pipe(
+        switchMap((a) =>
+          iif(
+            () => a,
+            merge(loading$, valueOrError$),
+            of({ state: inactiveSymbol } as ResponseInactive)
+          )
+        )
+      )
+    : merge(loading$, valueOrError$);
+  const meta = [{ errorSubscriptions: 0, refCount }];
 
   return fillStatefulObservable<Response, unknown>({
     raw,
@@ -163,5 +177,6 @@ export const statefulObservable = <Input, Response = Input>(
     log,
     index: -1, // will be incremented to 0 in fillStatefulObservable
     reload: () => cache$.next(createCache<Response>(cacheSize)),
+    refCount,
   });
 };
