@@ -2,8 +2,10 @@ import {
   BehaviorSubject,
   firstValueFrom,
   from,
+  Observable,
   of,
   Subject,
+  Subscribable,
   throwError,
 } from "rxjs";
 import {
@@ -44,7 +46,7 @@ describe("chaining / fillStatefulObservable", () => {
       expect(err).toEqual(false);
 
       const pending = await firstValueFrom(
-        so.pending$.pipe(take(2), toArray())
+        so.pending$.pipe(take(2), toArray()),
       );
       // last emission of pending for this raw is false (since 'ok' is success)
       expect(pending).toEqual([true, false]);
@@ -69,7 +71,7 @@ describe("chaining / fillStatefulObservable", () => {
     it("pipeError transforms error values and preserves non-error emissions", async () => {
       const raw$ = of(
         { state: loadingSymbol },
-        { state: errorSymbol, error: "err1" }
+        { state: errorSymbol, error: "err1" },
       );
       const so = fillStatefulObservable({
         raw: raw$,
@@ -92,7 +94,7 @@ describe("chaining / fillStatefulObservable", () => {
       const store = statefulObservable({
         input: new BehaviorSubject(1),
       }).pipeValue(map((v) => v + 10));
-      const res = await firstValueFrom(store);
+      const res = await firstValueFrom(store.value$);
 
       expect(res).toEqual(11);
     });
@@ -102,10 +104,10 @@ describe("chaining / fillStatefulObservable", () => {
         input: new BehaviorSubject(1),
       }).pipeValue(
         switchMap((v) => of(v + 10)),
-        delay(1)
+        delay(1),
       );
 
-      const res = await firstValueFrom(store);
+      const res = await firstValueFrom(store.value$);
 
       expect(res).toEqual(11);
     });
@@ -142,7 +144,7 @@ describe("chaining / fillStatefulObservable", () => {
         map((v) => +v),
         map((v) => v.toString()),
         map((v) => +v),
-        map((v) => "piped " + v)
+        map((v) => "piped " + v),
       );
 
       input.next(1);
@@ -159,7 +161,7 @@ describe("chaining / fillStatefulObservable", () => {
         input: of(1).pipe(
           map(() => {
             throw "err2";
-          })
+          }),
         ),
       }).pipeError(map((e) => e + "1"));
 
@@ -184,7 +186,7 @@ describe("chaining / fillStatefulObservable", () => {
       }).pipeValue(
         switchMap((value) => {
           throw value.toString();
-        })
+        }),
       );
 
       const storeWithErrorHandling = store.pipeError(
@@ -192,7 +194,7 @@ describe("chaining / fillStatefulObservable", () => {
           if (error === "1") return 1;
           if (error === "2") return 2;
           return error;
-        })
+        }),
       );
 
       const res = await firstValueFrom(store.error$);
@@ -222,7 +224,7 @@ describe("chaining / fillStatefulObservable", () => {
         input: new BehaviorSubject(1),
       }).pipeValue(
         delay(1),
-        switchMap(() => throwError(() => "err5"))
+        switchMap(() => throwError(() => "err5")),
       );
 
       const res = await firstValueFrom(store.raw$.pipe(take(2), toArray()));
@@ -252,18 +254,18 @@ describe("chaining / fillStatefulObservable", () => {
       })
         .pipeValue(
           switchMap((value) => of([value, ++counter])),
-          delay(1)
+          delay(1),
         )
         .pipe(shareReplay(1));
 
       // first request triggered by subscribing to value
-      const first = await firstValueFrom(store);
+      const first = await firstValueFrom(store.value$);
       expect(first).toEqual([1, 1]);
 
       // trigger reload explicitly and expect a new request
       store.reload();
       await new Promise((r) => setTimeout(r, 5)); // wait for async operations
-      const second = await firstValueFrom(store);
+      const second = await firstValueFrom(store.value$);
       expect(second).toEqual([1, 2]);
     });
 
@@ -273,7 +275,7 @@ describe("chaining / fillStatefulObservable", () => {
         input: new BehaviorSubject(1),
       }).pipeValue(
         switchMap((value) => of([value, ++counter] as [number, number])),
-        delay(1)
+        delay(1),
       );
 
       const results: ResponseWithStatus<[number, number], unknown>[] = [];
@@ -308,7 +310,7 @@ describe("chaining / fillStatefulObservable", () => {
             return throwError(() => "err8");
           }
           return of([value, ++counter] as [number, number]);
-        })
+        }),
       );
 
       const results: ResponseWithStatus<[number, number], unknown>[] = [];
@@ -349,7 +351,7 @@ describe("chaining / fillStatefulObservable", () => {
 
       const byNext = await new Promise<number>((resolve) =>
         // next-only callback
-        store.subscribe((v) => resolve(v))
+        store.subscribe((v) => resolve(v)),
       );
 
       expect(byNext).toEqual(1);
@@ -358,7 +360,7 @@ describe("chaining / fillStatefulObservable", () => {
         // observer object with next/error/complete
         store.subscribe({
           next: (v) => resolve(v),
-        })
+        }),
       );
 
       expect(byObserver).toEqual(1);
@@ -390,14 +392,40 @@ describe("chaining / fillStatefulObservable", () => {
       }).pipe(
         // @ts-expect-error
         map((x) => x.toString()),
-        map((x) => +x)
+        map((x) => +x),
       );
 
-      const res = await firstValueFrom(store);
+      const res = await firstValueFrom(store as unknown as Observable<number>);
 
       // TODO find better way to check it
       // +({ state: loadingSymbol }) returns NaN
       expect(res).toEqual(NaN);
+    });
+
+    type AsyncPipeTransform<T> = <T>(
+      obj: Observable<T> | Subscribable<T> | PromiseLike<T>,
+    ) => T;
+
+    type Expect<T extends true> = T;
+    type Equal<X, Y> =
+      (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2
+        ? true
+        : false;
+
+    it("TODO", async () => {
+      const store = statefulObservable({
+        input: new BehaviorSubject(1),
+      }).pipe(
+        // @ts-expect-error
+        map((x) => x.toString()),
+        map((x) => +x),
+      );
+
+      const transform = (() => null) as AsyncPipeTransform<number>;
+
+      const res = transform(store);
+
+      type Test1 = Expect<Equal<typeof res, number>>;
     });
   });
 });

@@ -92,7 +92,7 @@ export const statefulObservableFactory = <Input, Response>(params: {
   mapOperator?: TmapOperator;
 }): StatefulObservableFactory<Input, Response> => {
   const cache = createCache<[StatefulObservable<Response>, number]>(
-    params.cacheSize ?? 42
+    params.cacheSize ?? 42,
   );
   const complete$ = new Subject<void>();
 
@@ -117,7 +117,7 @@ export const statefulObservableFactory = <Input, Response>(params: {
             unsubscribe: () => {
               activeSubscriptions--;
             },
-          })
+          }),
         );
         cache.set(key, [stream, activeSubscriptions]);
         return stream;

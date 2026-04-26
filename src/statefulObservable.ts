@@ -27,7 +27,7 @@ import {
 } from "./types";
 
 const expandInput = <Input, Response>(
-  params: StatefulObservableParams<Input, Response>
+  params: StatefulObservableParams<Input, Response>,
 ): ParamsWithInput<Input, Response> | ParamsWithLoader<Input, Response> => {
   if (typeof params === "function") return { loader: params };
   if (isObservable(params)) return { input: params };
@@ -35,7 +35,7 @@ const expandInput = <Input, Response>(
 };
 
 export const flattenResponse = <Response, Error>(
-  response: ResponseError<Error> | Response
+  response: ResponseError<Error> | Response,
 ): FlatResponseContainer<Response, Error> => {
   if (isError(response)) {
     return { error: response.error };
@@ -101,11 +101,19 @@ export const flattenResponse = <Response, Error>(
  *   input: myInput$,
  * });
  *
+ * // use combineStatefulObservables instead of combineLatest
+ * // resulting statefulObservable will merge pending, error, and value streams properly
+ * const combined = combineStatefulObservables(
+ *  [stream1,stream2, streamX],
+ *  // tuple of values - type safe
+ *  ([value1, value2, valueX]) => ({ value1, value2, valueX })
+ * )
+ *
  * More examples:
  * @see https://github.com/earthdmitriy/stateful-observable/blob/main/docs/recipes.md
  */
 export const statefulObservable = <Input, Response = Input>(
-  options: StatefulObservableParams<Input, Response>
+  options: StatefulObservableParams<Input, Response>,
 ): StatefulObservable<Response, unknown> => {
   const {
     input,
@@ -124,7 +132,7 @@ export const statefulObservable = <Input, Response = Input>(
 
   const loading$ = combineLatest([source$, cache$]).pipe(
     mapToLoading(),
-    catchResponseError()
+    catchResponseError(),
   ); // source can throw errors too
 
   const makeObservableInput = (input: Input) =>
@@ -148,13 +156,13 @@ export const statefulObservable = <Input, Response = Input>(
         tap({
           next: (result) => cache.set(key, result),
         }),
-        catchResponseError()
+        catchResponseError(),
       );
     }),
     catchResponseError(),
     tap((raw) => {
       if (log) log(flattenResponse(raw), name, 0);
-    })
+    }),
   );
 
   const raw = active
@@ -163,9 +171,9 @@ export const statefulObservable = <Input, Response = Input>(
           iif(
             () => a,
             merge(loading$, valueOrError$),
-            of({ state: inactiveSymbol } as ResponseInactive)
-          )
-        )
+            of({ state: inactiveSymbol } as ResponseInactive),
+          ),
+        ),
       )
     : merge(loading$, valueOrError$);
   const meta = [{ errorSubscriptions: 0, refCount }];

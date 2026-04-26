@@ -54,7 +54,7 @@ export type LogFn<Response, Error> = (
   index: number,
 ) => void;
 
-export type MetaInfo = { errorSubscriptions: number, refCount: boolean };
+export type MetaInfo = { errorSubscriptions: number; refCount: boolean };
 
 export type TmapOperator = <T, O extends ObservableInput<any>>(
   project: (value: T, index: number) => O,
@@ -217,9 +217,10 @@ export type StatefulObservableRaw<T = unknown, Error = unknown> = {
  */
 export type StatefulObservableStreams<T = unknown, Error = unknown> = {
   /**
-   * @deprecated since statufulObservable have own subscribe and implements InteropObservable - here is no reason to have separate value$ stream
-   *
    * Successful values only (filters out loading/error sentinels).
+   *
+   * @ignore statufulObservable have own subscribe and implements InteropObservable
+   * in most cases you should use statufulObservable itself, ignoring value$ stream
    *
    * Template (async pipe):
    * ```html
@@ -265,7 +266,9 @@ export type ObserverWithPending<T = unknown> = Partial<Observer<T>> & {
 };
 
 export type StatefulObservableSubsribable<T = unknown> = {
-  subscribe(observer: Partial<ObserverWithPending<T>>): Unsubscribable;
+  subscribe(
+    observer: Partial<ObserverWithPending<T>> | ((value: T) => void),
+  ): Unsubscribable;
 };
 
 export type StatefulObservableUtils<T = unknown, Error = unknown> = {
@@ -284,10 +287,10 @@ export type StatefulObservableUtils<T = unknown, Error = unknown> = {
    *
    * @returns A new `StatefulObservable` that reflects the applied operators.
    */
-  pipe(): StatefulObservable<T, Error>;
+  pipe(): StatefulObservable<NoInfer<T>, Error>;
   pipe(
-    ...operations: MonoTypeOperatorFunction<ResponseWithStatus<T>>[]
-  ): StatefulObservable<T>;
+    ...operations: MonoTypeOperatorFunction<NoInfer<T>>[]
+  ): StatefulObservable<NoInfer<T>>;
 
   /**
    * Operate on successful values only — behaves like `Observable.prototype.pipe`
@@ -485,11 +488,9 @@ export type StatefulObservableInfo = {
   readonly [metaSymbol]?: unknown;
 };
 
-// some functions (firstValueFrom for example) expect exact Observable (not even InteropObservable)
-// so we mimic it
-export type MimicObservable<T> = Omit<
+export type MimicObservable<T> = Pick<
   InstanceType<typeof Observable<T>>,
-  "pipe"
+  "forEach"
 >;
 
 export type StatefulObservable<

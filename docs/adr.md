@@ -317,13 +317,6 @@ Cons:
 ### Decision:
 - Done
 
-## Deprecate value$ output stream
-Since `subscribe` was added directly on the `statefulObservable` instance plus `InteropObservable` were implemented, there is no reason to subscribe onto `value$` to receive data.
-
-### Decision:
-- Done
-
-
 ## Reimplement `active$` stream from `tinyRxStore` for nested cache invalidation
 
 Pros:
@@ -361,6 +354,13 @@ This would allow piped successors to reuse it without needing to write `shareRep
 - Implemented as optional `refCount` parameter
 
 # To Be Determined
+
+## Deprecate value$ output stream
+Pros:
+- Since `subscribe` was added directly on the `statefulObservable` instance plus `InteropObservable` were implemented, there is no reason to subscribe onto `value$` to receive data.
+
+Cons:
+- some functions of RxJs (firstValueFrom) require exact Observable as parameter
 
 ## More shorthands
 

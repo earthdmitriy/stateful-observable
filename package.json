@@ -51,7 +51,8 @@
       "types": "./dist/*.d.ts",
       "import": "./dist/*.mjs",
       "require": "./dist/*.cjs"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "dependencies": {
     "rxjs": "^7.5.5",

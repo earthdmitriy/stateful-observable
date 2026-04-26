@@ -45,6 +45,34 @@ type UnwrapStatefulObservablesError<T extends unknown[]> = T extends []
   ? E[]
   : [];
 
+/**
+ * Combine multiple `StatefulObservable`s into a single derived `StatefulObservable`.
+ *
+ * The returned stream emits a loading sentinel when any source is loading,
+ * emits an inactive sentinel when any source is inactive, and emits an
+ * error sentinel when any source reports an error. When all sources are
+ * successful the provided `mapCombinedValue` is called with the tuple/array
+ * of successful payloads and its result is emitted as the combined value.
+ *
+ * The combined stream propagates `reload()` calls to all source streams.
+ *
+ * @template T - Tuple or array of `StatefulObservable` sources. The element
+ *   types are unwrapped and passed into `mapCombinedValue`.
+ * @template Result - The result type produced by `mapCombinedValue`.
+ * @param args - An array/tuple of `StatefulObservable` instances to combine.
+ * @param mapCombinedValue - A pure mapping function that receives the
+ *   unwrapped successful values from each source and returns the combined
+ *   result. This function is only called when none of the sources are
+ *   loading/error/inactive.
+ * @returns A `StatefulObservable<Result, UnwrapStatefulObservablesError<T>>`
+ *   that represents the combined state of the input streams.
+ *
+ * @example
+ * const combined = combineStatefulObservables(
+ *   [usersStream, permissionsStream],
+ *   ([users, permissions]) => ({ users, permissions })
+ * );
+ */
 export const combineStatefulObservables = <
   T extends [...StatefulObservable[]],
   Result
@@ -72,7 +100,7 @@ export const combineStatefulObservables = <
     name: `[${args.map(({ name }) => name).join(", ")}]`,
     meta,
     index: -1, // will be incremented to 0 in fillStatefulObservable
-    reload: () => args.forEach((store) => store.reload()),
+    reload: () => args.forEach((stream) => stream.reload()),
     // any refCount: true in sources => projection also refCount: true
     refCount: meta.some((m) => m.refCount),
   });

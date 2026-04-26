@@ -39,7 +39,7 @@ describe("fallback logging", () => {
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       "Unhandled error in statefulObservable 'unnamed #0'\nSubscribe to the 'error$' stream to handle and silence these errors.\nError details:",
-      "err"
+      "err",
     );
   });
 
@@ -69,17 +69,17 @@ describe("fallback logging", () => {
     expect(consoleErrorSpy).toHaveBeenNthCalledWith(
       1,
       "Unhandled error in statefulObservable 'unnamed #0'\nSubscribe to the 'error$' stream to handle and silence these errors.\nError details:",
-      "err"
+      "err",
     );
     expect(consoleErrorSpy).toHaveBeenNthCalledWith(
       2,
       "Unhandled error in statefulObservable 'unnamed #1'\nSubscribe to the 'error$' stream to handle and silence these errors.\nError details:",
-      "err"
+      "err",
     );
     expect(consoleErrorSpy).toHaveBeenNthCalledWith(
       3,
       "Unhandled error in statefulObservable 'unnamed #2'\nSubscribe to the 'error$' stream to handle and silence these errors.\nError details:",
-      "err"
+      "err",
     );
   });
 
@@ -111,7 +111,7 @@ describe("fallback logging", () => {
       input,
     })
       .pipeValue(
-        switchMap((value): Observable<number> => throwError(() => "err"))
+        switchMap((value): Observable<number> => throwError(() => "err")),
       )
       .pipeValue()
       .pipeValue()
@@ -137,12 +137,12 @@ describe("fallback logging", () => {
     const stream = statefulObservable<number, unknown>({
       input,
     }).pipeValue(
-      switchMap((value): Observable<number> => throwError(() => "err"))
+      switchMap((value): Observable<number> => throwError(() => "err")),
     );
 
     const combinedStream = combineStatefulObservables(
       [stream, statefulObservable(() => new BehaviorSubject(2))],
-      ([a]) => a
+      ([a]) => a,
     );
 
     // Subscribe to error$ to prevent logging
@@ -166,7 +166,7 @@ describe("fallback logging", () => {
       input,
       name: "TestStream",
     }).pipeValue(
-      switchMap((value): Observable<number> => throwError(() => "err"))
+      switchMap((value): Observable<number> => throwError(() => "err")),
     );
 
     const combinedStream = combineStatefulObservables(
@@ -177,7 +177,7 @@ describe("fallback logging", () => {
           name: "SecondStream",
         }),
       ],
-      ([a]) => a
+      ([a]) => a,
     );
 
     const results: number[] = [];
@@ -194,12 +194,12 @@ describe("fallback logging", () => {
     expect(consoleErrorSpy).toHaveBeenNthCalledWith(
       1,
       "Unhandled error in statefulObservable 'TestStream #1'\nSubscribe to the 'error$' stream to handle and silence these errors.\nError details:",
-      "err"
+      "err",
     );
     expect(consoleErrorSpy).toHaveBeenNthCalledWith(
       2,
       "Unhandled error in statefulObservable '[TestStream, SecondStream] #0'\nSubscribe to the 'error$' stream to handle and silence these errors.\nError details:",
-      ["err", false]
+      ["err", false],
     );
   });
 });

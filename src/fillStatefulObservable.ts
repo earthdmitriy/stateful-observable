@@ -25,7 +25,7 @@ const observable = (() =>
 
 /*
  * Internal function.
- * Takes raw stream and additional params and makes public instance of statefulObservable
+ * Takes raw stream with additional params and makes public instance of statefulObservable
  */
 export const fillStatefulObservable = <Result, Error>({
   raw,
@@ -51,14 +51,14 @@ export const fillStatefulObservable = <Result, Error>({
         (value) =>
           !isLoading(value) &&
           !isInactive(value) &&
-          log(flattenResponse(value), name, index)
+          log(flattenResponse(value), name, index),
       )
     : tap<ResponseWithStatus<Result, Error>>((value) => {
         if (isError(value) && !meta.some((m) => m.errorSubscriptions)) {
           // Log errors even if they are filtered out later, but only if there are active error subscribers
           console.error(
             `Unhandled error in statefulObservable '${name} #${index}'\nSubscribe to the 'error$' stream to handle and silence these errors.\nError details:`,
-            value.error
+            value.error,
           );
         }
       });
@@ -85,11 +85,11 @@ export const fillStatefulObservable = <Result, Error>({
         },
       }),
       filter((e) => !isLoading(e) && !isInactive(e)),
-      map((e) => (isError(e) ? (e.error as Error) : false))
+      map((e) => (isError(e) ? (e.error as Error) : false)),
     ),
     pending$: cachedRaw$.pipe(
       filter((e) => !isInactive(e)),
-      map(isLoading)
+      map(isLoading),
     ),
 
     pipe: (...args: Parameters<PipeRawOperator>) =>

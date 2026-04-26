@@ -56,7 +56,7 @@ export const catchResponseError = <T>(): OperatorFunction<
   T | ResponseError<unknown>
 > =>
   catchError((error) =>
-    of<ResponseError<unknown>>({ state: errorSymbol, error: error })
+    of<ResponseError<unknown>>({ state: errorSymbol, error: error }),
   );
 
 /**
@@ -82,7 +82,7 @@ export const startWithLoading = <T>(): OperatorFunction<
 > => startWith({ state: loadingSymbol } as ResponseLoading);
 
 export const mapToLoading = <T>(): OperatorFunction<T, ResponseLoading> =>
-  map(() => ({ state: loadingSymbol } as ResponseLoading));
+  map(() => ({ state: loadingSymbol }) as ResponseLoading);
 
 /**
  * Wrapper for shareReplay with default parameters
@@ -93,7 +93,7 @@ export const defaultCache = <T>(refCount = true): MonoTypeOperatorFunction<T> =>
 // helper to apply an array of operator functions to an observable's pipe
 export const applyPipe = <T, R = any>(
   obs: Observable<T>,
-  operations: OperatorFunction<any, any>[]
+  operations: OperatorFunction<any, any>[],
 ): Observable<R> => (obs.pipe as any).apply(obs, operations) as Observable<R>;
 
 export const pipeRaw: PipeRawOperator =
@@ -109,9 +109,9 @@ export const pipeRaw: PipeRawOperator =
           // if inactive bypass `inactive` event and cancel operators passed into pipe
           // here might be delay or shareReplay(1) that might prevent putting the reast of chain into inactive state
           of(e),
-          applyPipe(of(e), operations).pipe(catchResponseError())
-        )
-      )
+          applyPipe(of(e), operations).pipe(catchResponseError()),
+        ),
+      ),
     );
 
 export const pipeValue: PipeValueOperator =
@@ -123,9 +123,9 @@ export const pipeValue: PipeValueOperator =
         iif(
           () => isSuccess(e),
           applyPipe(of(e), operations).pipe(catchResponseError()),
-          of(e)
-        )
-      )
+          of(e),
+        ),
+      ),
     );
 
 export const pipeError: PipeErrorOperator =
@@ -138,10 +138,10 @@ export const pipeError: PipeErrorOperator =
           () => isError(e),
           applyPipe(of(e.error), operations).pipe(
             map(
-              (error): ResponseError<Error> => ({ state: errorSymbol, error })
-            )
+              (error): ResponseError<Error> => ({ state: errorSymbol, error }),
+            ),
           ),
-          of(e)
-        )
-      )
+          of(e),
+        ),
+      ),
     );
