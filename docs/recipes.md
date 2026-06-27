@@ -13,6 +13,7 @@ npm install @rx-evo/stateful-observable
 ```typescript
 import {
   statefulObservable,
+  statefulConnection,
   combineStatefulObservables,
 } from "@rx-evo/stateful-observable";
 ```
@@ -414,6 +415,36 @@ export class ProductsStreamService {
   }
 }
 ```
+
+### Dynamic source switching
+
+Use `statefulConnection` when a single view or service slot should stay alive while the underlying source changes — for example on route changes or when selecting another entity from a factory cache.
+
+```typescript
+@Injectable()
+export class EntityPanelService {
+  readonly entityView = statefulConnection<Entity>({ name: "entityPanel" });
+
+  readonly entityTitle$ = this.entityView.pipeValue(
+    map((entity) => entity.title),
+  );
+
+  private readonly entityFactory = statefulObservableFactory({
+    loader: (id: number) => this.api.getEntity(id),
+    cacheKey: (id) => [id],
+  });
+
+  showEntity(id: number) {
+    this.entityView.connect(this.entityFactory.get(id));
+  }
+
+  clear() {
+    this.entityView.disconnect();
+  }
+}
+```
+
+Call `connect` on the root connection instance. Piped derivatives such as `entityTitle$` receive relayed events automatically.
 
 ### Unit tests
 

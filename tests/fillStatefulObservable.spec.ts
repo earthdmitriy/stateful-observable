@@ -17,10 +17,11 @@ import {
   take,
   toArray,
 } from "rxjs/operators";
-import { fillStatefulObservable } from "./fillStatefulObservable";
-import { errorSymbol, loadingSymbol } from "./response-container";
-import { statefulObservable } from "./statefulObservable";
-import { ResponseWithStatus } from "./types";
+import { fillStatefulObservable } from "../src/fillStatefulObservable";
+import { errorSymbol, loadingSymbol } from "../src/response-container";
+import { statefulObservable } from "../src/statefulObservable";
+import { ResponseWithStatus } from "../src/types";
+import { Equal, Expect } from "./test.utils";
 
 describe("chaining / fillStatefulObservable", () => {
   describe("basic", () => {
@@ -30,7 +31,8 @@ describe("chaining / fillStatefulObservable", () => {
       const so = fillStatefulObservable({
         raw: raw$,
         name: "",
-        meta: [],
+        meta: undefined,
+        internalMeta: [],
         index: 0,
         reload: () => {},
         refCount: true,
@@ -46,7 +48,7 @@ describe("chaining / fillStatefulObservable", () => {
       expect(err).toEqual(false);
 
       const pending = await firstValueFrom(
-        so.pending$.pipe(take(2), toArray()),
+        so.pending$.pipe(take(2), toArray())
       );
       // last emission of pending for this raw is false (since 'ok' is success)
       expect(pending).toEqual([true, false]);
@@ -57,7 +59,8 @@ describe("chaining / fillStatefulObservable", () => {
       const so = fillStatefulObservable({
         raw: raw$,
         name: "",
-        meta: [],
+        meta: undefined,
+        internalMeta: [],
         index: 0,
         reload: () => {},
         refCount: true,
@@ -71,12 +74,13 @@ describe("chaining / fillStatefulObservable", () => {
     it("pipeError transforms error values and preserves non-error emissions", async () => {
       const raw$ = of(
         { state: loadingSymbol },
-        { state: errorSymbol, error: "err1" },
+        { state: errorSymbol, error: "err1" }
       );
       const so = fillStatefulObservable({
         raw: raw$,
         name: "",
-        meta: [],
+        meta: undefined,
+        internalMeta: [],
         index: 0,
         reload: () => {},
         refCount: true,
@@ -86,6 +90,27 @@ describe("chaining / fillStatefulObservable", () => {
 
       const err = await firstValueFrom(transformed.error$);
       expect(err).toEqual("err1X");
+    });
+
+    it(".with({ name }) returns a new instance with the given name and same value", async () => {
+      const raw$ = of({ state: loadingSymbol }, "ok");
+      const so = fillStatefulObservable({
+        raw: raw$,
+        meta: undefined,
+        name: "original",
+        internalMeta: [],
+        index: 0,
+        reload: () => {},
+        refCount: true,
+      });
+
+      const renamed = so.with({ name: "renamed" });
+
+      expect(renamed).not.toBe(so);
+      expect(so.name).toEqual("original");
+      expect(renamed.name).toEqual("renamed");
+      expect(renamed.index).toEqual(so.index + 1);
+      expect(await firstValueFrom(renamed.value$)).toEqual("ok");
     });
   });
 
@@ -104,7 +129,7 @@ describe("chaining / fillStatefulObservable", () => {
         input: new BehaviorSubject(1),
       }).pipeValue(
         switchMap((v) => of(v + 10)),
-        delay(1),
+        delay(1)
       );
 
       const res = await firstValueFrom(store.value$);
@@ -144,7 +169,7 @@ describe("chaining / fillStatefulObservable", () => {
         map((v) => +v),
         map((v) => v.toString()),
         map((v) => +v),
-        map((v) => "piped " + v),
+        map((v) => "piped " + v)
       );
 
       input.next(1);
@@ -161,7 +186,7 @@ describe("chaining / fillStatefulObservable", () => {
         input: of(1).pipe(
           map(() => {
             throw "err2";
-          }),
+          })
         ),
       }).pipeError(map((e) => e + "1"));
 
@@ -186,7 +211,7 @@ describe("chaining / fillStatefulObservable", () => {
       }).pipeValue(
         switchMap((value) => {
           throw value.toString();
-        }),
+        })
       );
 
       const storeWithErrorHandling = store.pipeError(
@@ -194,7 +219,7 @@ describe("chaining / fillStatefulObservable", () => {
           if (error === "1") return 1;
           if (error === "2") return 2;
           return error;
-        }),
+        })
       );
 
       const res = await firstValueFrom(store.error$);
@@ -224,7 +249,7 @@ describe("chaining / fillStatefulObservable", () => {
         input: new BehaviorSubject(1),
       }).pipeValue(
         delay(1),
-        switchMap(() => throwError(() => "err5")),
+        switchMap(() => throwError(() => "err5"))
       );
 
       const res = await firstValueFrom(store.raw$.pipe(take(2), toArray()));
@@ -254,7 +279,7 @@ describe("chaining / fillStatefulObservable", () => {
       })
         .pipeValue(
           switchMap((value) => of([value, ++counter])),
-          delay(1),
+          delay(1)
         )
         .pipe(shareReplay(1));
 
@@ -275,7 +300,7 @@ describe("chaining / fillStatefulObservable", () => {
         input: new BehaviorSubject(1),
       }).pipeValue(
         switchMap((value) => of([value, ++counter] as [number, number])),
-        delay(1),
+        delay(1)
       );
 
       const results: ResponseWithStatus<[number, number], unknown>[] = [];
@@ -310,7 +335,7 @@ describe("chaining / fillStatefulObservable", () => {
             return throwError(() => "err8");
           }
           return of([value, ++counter] as [number, number]);
-        }),
+        })
       );
 
       const results: ResponseWithStatus<[number, number], unknown>[] = [];
@@ -351,7 +376,7 @@ describe("chaining / fillStatefulObservable", () => {
 
       const byNext = await new Promise<number>((resolve) =>
         // next-only callback
-        store.subscribe((v) => resolve(v)),
+        store.subscribe((v) => resolve(v))
       );
 
       expect(byNext).toEqual(1);
@@ -360,7 +385,7 @@ describe("chaining / fillStatefulObservable", () => {
         // observer object with next/error/complete
         store.subscribe({
           next: (v) => resolve(v),
-        }),
+        })
       );
 
       expect(byObserver).toEqual(1);
@@ -392,7 +417,7 @@ describe("chaining / fillStatefulObservable", () => {
       }).pipe(
         // @ts-expect-error
         map((x) => x.toString()),
-        map((x) => +x),
+        map((x) => +x)
       );
 
       const res = await firstValueFrom(store as unknown as Observable<number>);
@@ -403,14 +428,8 @@ describe("chaining / fillStatefulObservable", () => {
     });
 
     type AsyncPipeTransform<T> = <T>(
-      obj: Observable<T> | Subscribable<T> | PromiseLike<T>,
+      obj: Observable<T> | Subscribable<T> | PromiseLike<T>
     ) => T;
-
-    type Expect<T extends true> = T;
-    type Equal<X, Y> =
-      (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2
-        ? true
-        : false;
 
     it("TODO", async () => {
       const store = statefulObservable({
@@ -418,7 +437,7 @@ describe("chaining / fillStatefulObservable", () => {
       }).pipe(
         // @ts-expect-error
         map((x) => x.toString()),
-        map((x) => +x),
+        map((x) => +x)
       );
 
       const transform = (() => null) as AsyncPipeTransform<number>;

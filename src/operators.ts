@@ -137,9 +137,10 @@ export const pipeError: PipeErrorOperator =
         iif(
           () => isError(e),
           applyPipe(of(e.error), operations).pipe(
-            map(
-              (error): ResponseError<Error> => ({ state: errorSymbol, error }),
-            ),
+            map((error): ResponseError<Error> => ({
+              state: errorSymbol,
+              error,
+            })),
           ),
           of(e),
         ),

@@ -1,4 +1,3 @@
-/* To learn more about Typescript configuration file: https://www.typescriptlang.org/docs/handbook/tsconfig-json.html. */
 {
   "compileOnSave": false,
   "compilerOptions": {
@@ -9,8 +8,10 @@
     "forceConsistentCasingInFileNames": true,
     "moduleResolution": "bundler",
     "declaration": true,
+    "rootDir": "./src",
     "outDir": "./dist"
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.spec.ts"]
+  "exclude": ["src/**/*.spec.ts"],
+  "references": [{ "path": "./tsconfig.spec.json" }]
 }

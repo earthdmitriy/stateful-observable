@@ -18,17 +18,17 @@ import {
   errorSymbol,
   inactiveSymbol,
   loadingSymbol,
-} from "./response-container";
-import { statefulObservable } from "./statefulObservable";
-import { ResponseWithStatus } from "./types";
+} from "../src/response-container";
+import { statefulObservable } from "../src/statefulObservable";
+import { ResponseWithStatus } from "../src/types";
 
 class SampleService {
   input = new ReplaySubject<number>(1);
   available = new BehaviorSubject(true);
-  process = jest.fn((value) => {
+  process = vi.fn((value) => {
     return value * 2;
   });
-  makeRequest = jest.fn((value) =>
+  makeRequest = vi.fn((value) =>
     defer(() =>
       of(value).pipe(
         delay(1),
@@ -43,7 +43,7 @@ class SampleService {
 
 describe("statefulObservable", () => {
   afterEach(async () => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     await new Promise((r) => setTimeout(r, 5));
   });
 
@@ -117,7 +117,7 @@ describe("statefulObservable", () => {
 
     it("does not emit public events when inactive and keeps raw$ inactive internal event", async () => {
       const active = new BehaviorSubject(false);
-      const loader = jest.fn((value: number) =>
+      const loader = vi.fn((value: number) =>
         defer(() => of(value * 10).pipe(delay(1))),
       );
       const store = statefulObservable({
@@ -130,9 +130,9 @@ describe("statefulObservable", () => {
       const errors: unknown[] = [];
       const pending: boolean[] = [];
 
-      const subscribeNext = jest.fn();
-      const subscribeError = jest.fn();
-      const subscribePending = jest.fn();
+      const subscribeNext = vi.fn();
+      const subscribeError = vi.fn();
+      const subscribePending = vi.fn();
 
       const vSub = store.value$.subscribe((v) => values.push(v));
       const eSub = store.error$.subscribe((e) => errors.push(e));
@@ -431,13 +431,13 @@ describe("statefulObservable", () => {
   });
 
   describe("cache", () => {
-    let makeRequestMock = jest.fn(
+    let makeRequestMock = vi.fn(
       (value: number): Observable<number> =>
         defer(() => of(value).pipe(delay(1))),
     );
 
     beforeEach(() => {
-      makeRequestMock = jest.fn(
+      makeRequestMock = vi.fn(
         (value: number): Observable<number> =>
           defer(() => of(value).pipe(delay(1))),
       );

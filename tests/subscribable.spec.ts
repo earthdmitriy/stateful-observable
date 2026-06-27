@@ -1,6 +1,10 @@
 import { of, throwError } from "rxjs";
-import { errorSymbol, loadingSymbol } from "./response-container";
-import { makeSubscribe } from "./subscribable";
+import {
+  errorSymbol,
+  inactiveSymbol,
+  loadingSymbol,
+} from "../src/response-container";
+import { makeSubscribe } from "../src/subscribable";
 
 describe("makeSubscribe", () => {
   it("returns the observable.subscribe function when called with no arg", () => {
@@ -42,6 +46,26 @@ describe("makeSubscribe", () => {
       "error:e1",
       "pending:false",
       "complete",
+    ]);
+  });
+
+  it("calls active(false) on inactive and active(true) on subsequent events", () => {
+    const calls: string[] = [];
+    const obs = of({ state: inactiveSymbol }, { state: loadingSymbol }, "ok");
+
+    makeSubscribe(obs)({
+      active: (active) => calls.push(`active:${String(active)}`),
+      pending: (p) => calls.push(`pending:${String(p)}`),
+      next: (v) => calls.push(`next:${String(v)}`),
+    });
+
+    expect(calls).toEqual([
+      "active:false",
+      "active:true",
+      "pending:true",
+      "active:true",
+      "next:ok",
+      "pending:false",
     ]);
   });
 

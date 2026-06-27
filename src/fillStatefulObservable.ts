@@ -27,10 +27,11 @@ const observable = (() =>
  * Internal function.
  * Takes raw stream with additional params and makes public instance of statefulObservable
  */
-export const fillStatefulObservable = <Result, Error>({
+export const fillStatefulObservable = <Result, Error, Meta = undefined>({
   raw,
   name,
   meta,
+  internalMeta,
   log,
   index: prevIndex,
   reload,
@@ -38,12 +39,13 @@ export const fillStatefulObservable = <Result, Error>({
 }: {
   raw: Observable<ResponseWithStatus<Result, Error>>;
   name: string;
-  meta: MetaInfo[];
+  meta?: Meta;
+  internalMeta: MetaInfo[];
   index: number;
   log?: LogFn<Result, Error>;
   reload: () => void;
   refCount: boolean;
-}): StatefulObservable<Result, Error> => {
+}): StatefulObservable<Result, Error, Meta> => {
   const index = prevIndex + 1;
 
   const sideEffect = log
@@ -54,7 +56,7 @@ export const fillStatefulObservable = <Result, Error>({
           log(flattenResponse(value), name, index),
       )
     : tap<ResponseWithStatus<Result, Error>>((value) => {
-        if (isError(value) && !meta.some((m) => m.errorSubscriptions)) {
+        if (isError(value) && !internalMeta.some((m) => m.errorSubscriptions)) {
           // Log errors even if they are filtered out later, but only if there are active error subscribers
           console.error(
             `Unhandled error in statefulObservable '${name} #${index}'\nSubscribe to the 'error$' stream to handle and silence these errors.\nError details:`,
@@ -70,7 +72,8 @@ export const fillStatefulObservable = <Result, Error>({
   return {
     raw$: cachedRaw$,
     name,
-    [metaSymbol]: meta,
+    meta,
+    [metaSymbol]: internalMeta,
     index,
     reload,
 
@@ -78,10 +81,10 @@ export const fillStatefulObservable = <Result, Error>({
     error$: cachedRaw$.pipe(
       tap({
         subscribe: () => {
-          meta.forEach((m) => m.errorSubscriptions++);
+          internalMeta.forEach((m) => m.errorSubscriptions++);
         },
         unsubscribe: () => {
-          meta.forEach((m) => m.errorSubscriptions--);
+          internalMeta.forEach((m) => m.errorSubscriptions--);
         },
       }),
       filter((e) => !isLoading(e) && !isInactive(e)),
@@ -97,6 +100,7 @@ export const fillStatefulObservable = <Result, Error>({
         raw: cachedRaw$.pipe(pipeRaw(...args)),
         name,
         meta,
+        internalMeta,
         index,
         reload,
         refCount,
@@ -107,6 +111,7 @@ export const fillStatefulObservable = <Result, Error>({
         raw: cachedRaw$.pipe(pipeValue(...args)),
         name,
         meta,
+        internalMeta,
         index,
         reload,
         refCount,
@@ -117,6 +122,18 @@ export const fillStatefulObservable = <Result, Error>({
         raw: cachedRaw$.pipe(pipeError(...args)),
         name,
         meta,
+        internalMeta,
+        index,
+        reload,
+        refCount,
+      }),
+
+    with: (options: { name?: string; meta?: Meta }) =>
+      fillStatefulObservable({
+        raw: cachedRaw$,
+        name: options.name ?? name,
+        meta: "meta" in options ? options.meta : meta,
+        internalMeta,
         index,
         reload,
         refCount,
@@ -129,5 +146,5 @@ export const fillStatefulObservable = <Result, Error>({
 
     forEach: (next: (value: Result) => void) =>
       cachedRaw$.forEach((x) => isSuccess(x) && next(x)),
-  } as unknown as StatefulObservable<Result, Error>;
+  } as unknown as StatefulObservable<Result, Error, Meta>;
 };

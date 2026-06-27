@@ -17,33 +17,28 @@ import {
   StatefulObservable,
 } from "./types";
 
-type UnwrapStatefulObservable<T> = T extends StatefulObservable<infer U>
-  ? U
-  : never;
+type UnwrapStatefulObservable<T> =
+  T extends StatefulObservable<infer U> ? U : never;
 type UnwrapStatefulObservables<T extends unknown[]> = T extends []
   ? [] // stop on empty tuple
   : T extends readonly [infer Head, ...infer Tail]
-  ? [UnwrapStatefulObservable<Head>, ...UnwrapStatefulObservables<Tail>] // process as tuple
-  : T extends StatefulObservable<infer R>[] // process as array
-  ? R[]
-  : [];
+    ? [UnwrapStatefulObservable<Head>, ...UnwrapStatefulObservables<Tail>] // process as tuple
+    : T extends StatefulObservable<infer R>[] // process as array
+      ? R[]
+      : [];
 
-type UnwrapStatefulObservableError<T> = T extends StatefulObservable<
-  any,
-  infer E
->
-  ? false | E
-  : never;
+type UnwrapStatefulObservableError<T> =
+  T extends StatefulObservable<any, infer E> ? false | E : never;
 type UnwrapStatefulObservablesError<T extends unknown[]> = T extends []
   ? [] // stop on empty tuple
   : T extends [infer Head, ...infer Tail]
-  ? [
-      UnwrapStatefulObservableError<Head>,
-      ...UnwrapStatefulObservablesError<Tail>
-    ] // process as tuple
-  : T extends StatefulObservable<any, infer E>[] // process as array
-  ? E[]
-  : [];
+    ? [
+        UnwrapStatefulObservableError<Head>,
+        ...UnwrapStatefulObservablesError<Tail>,
+      ] // process as tuple
+    : T extends StatefulObservable<any, infer E>[] // process as array
+      ? E[]
+      : [];
 
 /**
  * Combine multiple `StatefulObservable`s into a single derived `StatefulObservable`.
@@ -75,10 +70,10 @@ type UnwrapStatefulObservablesError<T extends unknown[]> = T extends []
  */
 export const combineStatefulObservables = <
   T extends [...StatefulObservable[]],
-  Result
+  Result,
 >(
   args: [...T],
-  mapCombinedValue: (data: UnwrapStatefulObservables<T>) => Result
+  mapCombinedValue: (data: UnwrapStatefulObservables<T>) => Result,
 ): StatefulObservable<Result, UnwrapStatefulObservablesError<T>> => {
   const meta = args.flatMap((a) => a[metaSymbol] as MetaInfo[]);
 
@@ -95,10 +90,10 @@ export const combineStatefulObservables = <
             error: events.map((x) => (isError(x) ? x.error : false)),
           } as ResponseError<UnwrapStatefulObservablesError<T>>;
         return mapCombinedValue(events as UnwrapStatefulObservables<T>);
-      })
+      }),
     ),
     name: `[${args.map(({ name }) => name).join(", ")}]`,
-    meta,
+    internalMeta: meta,
     index: -1, // will be incremented to 0 in fillStatefulObservable
     reload: () => args.forEach((stream) => stream.reload()),
     // any refCount: true in sources => projection also refCount: true

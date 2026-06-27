@@ -29,10 +29,7 @@ export type ResponseError<E = unknown> = {
 };
 
 export type ResponseWithStatus<T, E = unknown> =
-  | ResponseInactive
-  | ResponseLoading
-  | ResponseError<E>
-  | T;
+  ResponseInactive | ResponseLoading | ResponseError<E> | T;
 
 export type FlatResponseContainer<Value, Error = unknown> =
   | {
@@ -60,7 +57,7 @@ export type TmapOperator = <T, O extends ObservableInput<any>>(
   project: (value: T, index: number) => O,
 ) => OperatorFunction<T, ObservedValueOf<O>>;
 
-export type CommonParams<Input, Response> = {
+export type CommonParams<Input, Response, Meta> = {
   /**
    * Option to temporary shut down observable.
    * While `false` (inactive) statefule observable will keep all subscriptions alive, but wan't emit any events on them
@@ -87,6 +84,11 @@ export type CommonParams<Input, Response> = {
   name?: string;
 
   /**
+   * An optional carrier of meta info.
+   */
+  meta?: Meta;
+
+  /**
    * Optional logging hooks called for each value.
    */
   log?: LogFnWithInput<Input, Response>;
@@ -104,7 +106,11 @@ export type CommonParams<Input, Response> = {
  * @template Input - type of values produced by the input observable
  * @template Response - type produced by the loader or passed through when no loader is used
  */
-export type ParamsWithInput<Input, Response> = CommonParams<Input, Response> & {
+export type ParamsWithInput<Input, Response, Meta> = CommonParams<
+  Input,
+  Response,
+  Meta
+> & {
   /**
    * Source observable that drives requests/values.
    * When provided, every emission from this observable will be processed
@@ -134,9 +140,10 @@ export type ParamsWithInput<Input, Response> = CommonParams<Input, Response> & {
  * constant trigger (when `input` is not provided) but still requires a
  * `loader` to produce responses from an input value.
  */
-export type ParamsWithLoader<Input, Response> = CommonParams<
+export type ParamsWithLoader<Input, Response, Meta> = CommonParams<
   Input,
-  Response
+  Response,
+  Meta
 > & {
   /**
    * Optional source observable. If omitted the implementation will use a
@@ -164,11 +171,11 @@ export type ParamsWithLoader<Input, Response> = CommonParams<
 export type OnlyInput<Input> = Observable<Input>;
 export type OnlyLoader<Response> = () => ObservableInput<Response>;
 
-export type StatefulObservableParams<Input, Response> =
+export type StatefulObservableParams<Input, Response, Meta> =
   | OnlyInput<Input>
   | OnlyLoader<Response>
-  | ParamsWithInput<Input, Response>
-  | ParamsWithLoader<Input, Response>;
+  | ParamsWithInput<Input, Response, Meta>
+  | ParamsWithLoader<Input, Response, Meta>;
 
 /**
  * The minimal "raw" shape returned by the factory that backs the higher-level
@@ -258,6 +265,11 @@ export type StatefulObservableStreams<T = unknown, Error = unknown> = {
 };
 
 export type ObserverWithPending<T = unknown> = Partial<Observer<T>> & {
+  /**
+   * Called when the stream becomes inactive (`active: false`) or active again.
+   */
+  active?: (active: boolean) => void;
+
   /**
    * A callback function that gets called by the producer during the subscription when
    * the stream's pending state changes.
@@ -472,9 +484,18 @@ export type StatefulObservableUtils<T = unknown, Error = unknown> = {
     op9: OperatorFunction<H, I>,
     ...operations: OperatorFunction<any, any>[]
   ): StatefulObservable<T, unknown>;
+
+  /**
+   * Returns a new `StatefulObservable` with the same stream and behavior but
+   * a different debug name and/or metadata.
+   */
+  with<Meta>(options: {
+    name?: string;
+    meta?: Meta;
+  }): StatefulObservable<T, Error, Meta>;
 };
 
-export type StatefulObservableInfo = {
+export type StatefulObservableInfo<T> = {
   /**
    * A name for the stateful observable, useful for debugging.
    */
@@ -484,7 +505,13 @@ export type StatefulObservableInfo = {
    * among multiple stateful observables.
    */
   readonly index: number;
-
+  /**
+   * Additional information
+   */
+  readonly meta: T;
+  /**
+   * Internal metadata
+   */
   readonly [metaSymbol]?: unknown;
 };
 
@@ -493,15 +520,24 @@ export type MimicObservable<T> = Pick<
   "forEach"
 >;
 
+/**
+ * Stateful observable that combines raw response streaming, derived convenience
+ * streams, subscription support, and helper methods.
+ *
+ * @template T - Successful payload type emitted by the observable.
+ * @template Error - Error payload type used for error-state emissions.
+ * @template Meta - Optional metadata attached to the observable instance.
+ */
 export type StatefulObservable<
   T = unknown,
   Error = unknown,
+  Meta = undefined,
 > = StatefulObservableRaw<T, Error> &
   StatefulObservableStreams<T, Error> &
   MimicObservable<T> & // order matters, StatefulObservableUtils should override signature of pipe
   StatefulObservableUtils<T, Error> &
   StatefulObservableSubsribable<T> &
-  StatefulObservableInfo &
+  StatefulObservableInfo<Meta> &
   InteropObservable<T>;
 
 export type PipeRawOperator = {

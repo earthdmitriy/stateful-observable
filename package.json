@@ -11,8 +11,8 @@
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json",
     "tsup": "rm -rf dist && tsup && cp docs/recipes.md dist/",
-    "test": "jest",
-    "test:watch": "jest --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "prettier": "prettier --log-level warn --write \"src/**/*.ts\"",
     "eslint": "eslint --fix",
     "bump": "npm version patch && git push && git push --tags"
@@ -59,19 +59,12 @@
     "tslib": "^2.5.0"
   },
   "devDependencies": {
-    "@types/jest": "^29.5.14",
     "@typescript-eslint/eslint-plugin": "^8.29.1",
     "@typescript-eslint/parser": "^8.29.1",
-    "prettier": "^3.3.3",
-    "ts-jest": "^29.4.5",
+    "prettier": "^3.9.0",
     "tsup": "^8.5.0",
-    "typescript": "^5.3.3"
-  },
-  "jest": {
-    "preset": "ts-jest",
-    "setupFilesAfterEnv": [
-      "<rootDir>/setupJest.ts"
-    ]
+    "typescript": "^5.3.3",
+    "vitest": "^3.2.1"
   },
   "author": "earthdmitriy",
   "license": "ISC"

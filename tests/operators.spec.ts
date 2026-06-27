@@ -13,8 +13,8 @@ import {
   defaultCache,
   pipeValue,
   startWithLoading,
-} from "./operators";
-import { errorSymbol, loadingSymbol } from "./response-container";
+} from "../src/operators";
+import { errorSymbol, loadingSymbol } from "../src/response-container";
 
 describe("statefulObservable operators", () => {
   describe("catchResponseError", () => {

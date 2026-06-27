@@ -1,13 +1,17 @@
 import { Observable } from "rxjs";
-import { isError, isLoading, isSuccess } from "./response-container";
+import {
+  isError,
+  isInactive,
+  isLoading,
+  isSuccess,
+} from "./response-container";
 import { ObserverWithPending, ResponseWithStatus } from "./types";
 
 export const makeSubscribe =
   <Result>(observable: Observable<ResponseWithStatus<Result>>) =>
   (
     observerOrNext?:
-      | Partial<ObserverWithPending<Result>>
-      | ((value: Result) => void),
+      Partial<ObserverWithPending<Result>> | ((value: Result) => void),
   ) => {
     if (!observerOrNext) return observable.subscribe;
 
@@ -26,6 +30,13 @@ export const makeSubscribe =
 
     const subscription = observable.subscribe({
       next: (rawValue) => {
+        if (isInactive(rawValue)) {
+          observerOrNext.active?.(false);
+          return;
+        }
+
+        observerOrNext.active?.(true);
+
         if (isLoading(rawValue)) observerOrNext.pending?.(true);
         if (isSuccess(rawValue)) {
           observerOrNext.next?.(rawValue);

@@ -1,6 +1,6 @@
 import { firstValueFrom } from "rxjs";
 import { take, toArray } from "rxjs/operators";
-import { statefulObservableFactory } from "./factory";
+import { statefulObservableFactory } from "../src/factory";
 
 describe("statefulObservableFactory", () => {
   it("reuses statefulObservable instances for the same key (single request)", async () => {

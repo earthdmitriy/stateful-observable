@@ -1,4 +1,4 @@
-import { createCache } from "./cache";
+import { createCache } from "../src/cache";
 
 describe("RollingCache / createCache (LRU)", () => {
   it("stores, retrieves and resets values", () => {

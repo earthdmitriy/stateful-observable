@@ -17,6 +17,7 @@ npm install @rx-evo/stateful-observable
 - Provides type-safe error handling
 - Supports value and error transformation through piping
 - Enables easy combination of multiple stateful observables
+- Dynamic source switching via `statefulConnection` — connect or disconnect a data source at runtime without rebuilding the pipe chain
 - Implements caching and retry functionality
 - Implements InteropObservable - can replace vanilla Observables anywhere
 
@@ -53,6 +54,18 @@ const processedBucket$ = combineStatefulObservable(
   // Use a separate pipe for error processing
   map(typeguard),
 );
+
+// Create a view slot early, connect a source when the context is known
+const userView$ = statefulConnection<User>({ name: "userView" });
+const userDisplay$ = userView$.pipeValue(map((u) => u.displayName));
+
+userView$.connect(userStore.get(userId));
+// or a vanilla observable:
+userView$.connect(http.get<User>(`/users/${userId}`));
+// switch context:
+userView$.connect(userStore.get(otherId));
+// disconnect (emits inactive):
+userView$.disconnect();
 
 // Full notation
 const datastream = statefulObservable({
@@ -121,6 +134,7 @@ Creates a new stateful observable wrapper.
 - `mapOperator`: (Optional) Custom operator for mapping values (defaults to switchMap)
 - `cacheKey`: Method mapping input to key identifying the query
 - `cacheSize`: Cache size. Defaults to 42. Cache uses an LRU-like strategy
+- `meta`: (Optional) Arbitrary metadata attached to the observable instance, accessible via `.meta`
 
 #### Returns
 
@@ -134,6 +148,7 @@ Returns a `StatefulObservable` object with the following properties:
 - `pipe(...)`: Method to apply operators to the raw observable
 - `pipeValue(...)`: Method to transform successful values
 - `pipeError(...)`: Method to transform error states
+- `with(options)`: Returns a new `StatefulObservable` with updated name and/or meta
 
 ## Error Handling
 
@@ -150,6 +165,43 @@ datastream.error$.subscribe((error) => {
   // Handle error
 });
 ```
+
+## Metadata
+
+Attach arbitrary metadata to a stateful observable for debugging, logging, or framework integration:
+
+```typescript
+const stream = statefulObservable({
+  input: source$,
+  meta: { feature: "user-profile", role: "admin" },
+});
+
+console.log(stream.meta); // { feature: "user-profile", role: "admin" }
+```
+
+Metadata is preserved through `pipeValue`, `pipeError`, and `pipe` chains:
+
+```typescript
+const derived = stream.pipeValue(map(transform));
+derived.meta; // same reference as stream.meta
+```
+
+### `.with(options)`
+
+Returns a new `StatefulObservable` with updated name and/or meta. The original instance is not modified.
+
+```typescript
+// rename only
+const renamed = stream.with({ name: "userStream" });
+
+// change meta only
+const withNewMeta = stream.with({ meta: { feature: "other" } });
+
+// change both
+const updated = stream.with({ name: "newName", meta: { feature: "other" } });
+```
+
+When only `name` is provided, the original meta is preserved. When `meta` is provided, it replaces the previous value.
 
 ### Utilities
 
@@ -178,6 +230,35 @@ const combined = combineStatefulObservables(
   map(([e1, e2]) => mapError(e1, e2)),
 );
 ```
+
+#### `statefulConnection(options?)`
+
+Creates a relay `StatefulObservable` that can be wired to a source at runtime.
+
+```typescript
+const slot = statefulConnection<User, ApiError>({ name: "userView" });
+
+slot.connect(statefulSource);
+slot.connect(http.get<User>("/users/1")); // vanilla ObservableInput also works
+slot.disconnect(); // emits inactive
+```
+
+Options:
+
+- `name`: Optional debug name (default: `"connection"`)
+- `refCount`: Optional refCount for the internal relay (default: `true`)
+- `meta`: Optional metadata attached to the connection, accessible via `.meta`
+
+Returns `StatefulConnection<T, E>` — a `StatefulObservable` plus:
+
+- `connect(source)` — `StatefulObservable<T, E>` or `ObservableInput<T>`
+  - stateful source: forwards `raw$` events (loading, error, value, inactive)
+  - vanilla source: emits loading, then values; errors via `catchResponseError`
+- `disconnect()` — unsubscribes and emits inactive
+
+Before the first `connect` and after `disconnect`, the connection is inactive (same semantics as `active: false`). `connect` and `disconnect` exist only on the root instance; piped derivatives receive relayed events from the root.
+
+`reload()` is a no-op on connections.
 
 ## State Management Example
 
@@ -212,12 +293,17 @@ type ResponseLoading = {
   state: typeof loadingSymbol;
 };
 
+type ResponseInactive = {
+  state: typeof inactiveSymbol;
+};
+
 type ResponseError<E = unknown> = {
   state: typeof errorSymbol;
   error: E;
 };
 
 type ResponseWithStatus<T, E = unknown> =
+  | ResponseInactive
   | ResponseLoading
   | ResponseError<E>
   | T;
@@ -341,6 +427,18 @@ You might find answers here.
 Or create new issue https://github.com/earthdmitriy/stateful-observable/issues
 
 ## Changelog
+
+0.5.0
+- `statefulConnection` — factory for dynamic wiring to a data source
+  - `connect(source)` — `StatefulObservable` or vanilla `ObservableInput<T>`
+    - stateful: forwards loading/error/value/inactive via `raw$`
+    - vanilla: loading → value(s), errors via `catchResponseError`
+  - `disconnect()` — unsubscribes and emits inactive
+  - disconnected / before first connect — inactive (same as `active: false`)
+- `meta` — arbitrary metadata attached to a `StatefulObservable`, accessible via `.meta`
+  - set via `options.meta` at creation
+  - preserved through `pipeValue`, `pipeError`, and `pipe` chains
+- `.with(options)` — returns a new `StatefulObservable` with updated name and/or meta (replaces `rename`)
 
 0.4.0
 - `statefulObservable` implements InteropObservable

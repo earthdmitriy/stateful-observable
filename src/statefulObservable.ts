@@ -26,9 +26,11 @@ import {
   StatefulObservableParams,
 } from "./types";
 
-const expandInput = <Input, Response>(
-  params: StatefulObservableParams<Input, Response>,
-): ParamsWithInput<Input, Response> | ParamsWithLoader<Input, Response> => {
+const expandInput = <Input, Response, Meta>(
+  params: StatefulObservableParams<Input, Response, Meta>,
+):
+  | ParamsWithInput<Input, Response, Meta>
+  | ParamsWithLoader<Input, Response, Meta> => {
   if (typeof params === "function") return { loader: params };
   if (isObservable(params)) return { input: params };
   return params;
@@ -112,9 +114,9 @@ export const flattenResponse = <Response, Error>(
  * More examples:
  * @see https://github.com/earthdmitriy/stateful-observable/blob/main/docs/recipes.md
  */
-export const statefulObservable = <Input, Response = Input>(
-  options: StatefulObservableParams<Input, Response>,
-): StatefulObservable<Response, unknown> => {
+export const statefulObservable = <Input, Response = Input, Meta = undefined>(
+  options: StatefulObservableParams<Input, Response, Meta>,
+): StatefulObservable<Response, unknown, Meta> => {
   const {
     input,
     active,
@@ -122,6 +124,7 @@ export const statefulObservable = <Input, Response = Input>(
     mapOperator = switchMap,
     cacheKey = () => [] as never[], // falsy cache key will skip caching
     cacheSize = 42,
+    meta,
     name = "unnamed",
     log,
     refCount = true,
@@ -176,12 +179,13 @@ export const statefulObservable = <Input, Response = Input>(
         ),
       )
     : merge(loading$, valueOrError$);
-  const meta = [{ errorSubscriptions: 0, refCount }];
+  const internalMeta = [{ errorSubscriptions: 0, refCount }];
 
-  return fillStatefulObservable<Response, unknown>({
+  return fillStatefulObservable<Response, unknown, Meta>({
     raw,
     name,
     meta,
+    internalMeta,
     log,
     index: -1, // will be incremented to 0 in fillStatefulObservable
     reload: () => cache$.next(createCache<Response>(cacheSize)),
