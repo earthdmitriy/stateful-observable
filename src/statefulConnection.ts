@@ -66,7 +66,7 @@ const makeRelayObserver = <T, E>(
 export const statefulConnection = <T, E = unknown, Meta = undefined>(options?: {
   name?: string;
   refCount?: boolean;
-  meta: Meta;
+  meta?: Meta;
 }): StatefulConnection<T, E, Meta> => {
   const { name = "connection", refCount = true, meta } = options ?? {};
 

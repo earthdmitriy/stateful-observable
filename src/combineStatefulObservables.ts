@@ -18,17 +18,17 @@ import {
 } from "./types";
 
 type UnwrapStatefulObservable<T> =
-  T extends StatefulObservable<infer U> ? U : never;
+  T extends StatefulObservable<infer U, unknown, unknown> ? U : never;
 type UnwrapStatefulObservables<T extends unknown[]> = T extends []
   ? [] // stop on empty tuple
   : T extends readonly [infer Head, ...infer Tail]
     ? [UnwrapStatefulObservable<Head>, ...UnwrapStatefulObservables<Tail>] // process as tuple
-    : T extends StatefulObservable<infer R>[] // process as array
+    : T extends StatefulObservable<infer R, unknown, unknown>[] // process as array
       ? R[]
       : [];
 
 type UnwrapStatefulObservableError<T> =
-  T extends StatefulObservable<any, infer E> ? false | E : never;
+  T extends StatefulObservable<unknown, infer E, unknown> ? false | E : never;
 type UnwrapStatefulObservablesError<T extends unknown[]> = T extends []
   ? [] // stop on empty tuple
   : T extends [infer Head, ...infer Tail]
@@ -36,7 +36,7 @@ type UnwrapStatefulObservablesError<T extends unknown[]> = T extends []
         UnwrapStatefulObservableError<Head>,
         ...UnwrapStatefulObservablesError<Tail>,
       ] // process as tuple
-    : T extends StatefulObservable<any, infer E>[] // process as array
+    : T extends StatefulObservable<unknown, infer E, unknown>[] // process as array
       ? E[]
       : [];
 
@@ -69,7 +69,7 @@ type UnwrapStatefulObservablesError<T extends unknown[]> = T extends []
  * );
  */
 export const combineStatefulObservables = <
-  T extends [...StatefulObservable[]],
+  T extends [...StatefulObservable<unknown, unknown, unknown>[]],
   Result,
 >(
   args: [...T],

@@ -12,6 +12,6 @@
     "outDir": "./dist"
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.spec.ts"],
+  "exclude": ["src/**/*.spec.ts", "node_modules", "dist"],
   "references": [{ "path": "./tsconfig.spec.json" }]
 }

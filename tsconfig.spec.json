@@ -8,10 +8,11 @@
     "forceConsistentCasingInFileNames": true,
     "moduleResolution": "bundler",
     "declaration": true,
-    "rootDir": "./src",
+    "rootDir": "./",
     "outDir": "./dist/spec",
     "types": ["vitest/globals"],
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.spec.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
 }

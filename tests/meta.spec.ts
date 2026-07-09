@@ -96,10 +96,7 @@ describe("meta", () => {
         input: new BehaviorSubject(2),
       });
 
-      const combined = combineStatefulObservables(
-        [s1, s2],
-        ([a, b]) => a + b,
-      );
+      const combined = combineStatefulObservables([s1, s2], ([a, b]) => a + b);
 
       expect(combined.meta).toBeUndefined();
     });
@@ -181,10 +178,22 @@ describe("meta", () => {
         input: new BehaviorSubject(2),
       });
 
-      const combined = combineStatefulObservables(
-        [s1, s2],
-        ([a, b]) => a + b,
-      );
+      const combined = combineStatefulObservables([s1, s2], ([a, b]) => a + b);
+
+      type Test = Expect<Equal<typeof combined.meta, undefined>>;
+    });
+
+    it("combineStatefulObservables with meta handle input types", () => {
+      const s1 = statefulObservable({
+        input: new BehaviorSubject(1),
+        meta: { x: 1 } as const,
+      });
+      const s2 = statefulObservable({
+        input: new BehaviorSubject(2),
+        meta: { y: 2 } as const,
+      });
+
+      const combined = combineStatefulObservables([s1, s2], ([a, b]) => a + b);
 
       type Test = Expect<Equal<typeof combined.meta, undefined>>;
     });
