@@ -1,9 +1,13 @@
 import {
   BehaviorSubject,
+  concatMap,
   from,
-  isObservable,
+  map,
+  Observable,
   ObservableInput,
-  Unsubscribable,
+  of,
+  startWith,
+  switchMap,
 } from "rxjs";
 import { fillStatefulObservable } from "./fillStatefulObservable";
 import { catchResponseError } from "./operators";
@@ -14,8 +18,7 @@ import {
   loadingSymbol,
 } from "./response-container";
 import {
-  ObserverWithPending,
-  ResponseError,
+  ResponseLoading,
   ResponseWithStatus,
   StatefulObservable,
 } from "./types";
@@ -46,23 +49,6 @@ const isStatefulObservableFn = <T, E>(
   return typeof source.reload === "function";
 };
 
-const makeRelayObserver = <T, E>(
-  relay$: BehaviorSubject<ResponseWithStatus<T, E>>,
-): Partial<ObserverWithPending<T>> => ({
-  active: (active) => {
-    if (!active) relay$.next({ state: inactiveSymbol });
-  },
-  pending: (pending) => {
-    if (pending) relay$.next({ state: loadingSymbol });
-  },
-  next: (value) => {
-    relay$.next(value);
-  },
-  error: (error) => {
-    relay$.next({ state: errorSymbol, error } as ResponseError<E>);
-  },
-});
-
 export const statefulConnection = <T, E = unknown, Meta = undefined>(options?: {
   name?: string;
   refCount?: boolean;
@@ -70,53 +56,46 @@ export const statefulConnection = <T, E = unknown, Meta = undefined>(options?: {
 }): StatefulConnection<T, E, Meta> => {
   const { name = "connection", refCount = true, meta } = options ?? {};
 
-  const relay$ = new BehaviorSubject<ResponseWithStatus<T, E>>({
-    state: inactiveSymbol,
-  });
-
-  let sourceSub: Unsubscribable | undefined;
+  const source$ = new BehaviorSubject<ConnectableSource<T, E> | null>(null);
 
   const disconnect = () => {
-    sourceSub?.unsubscribe();
-    sourceSub = undefined;
-    relay$.next({ state: inactiveSymbol });
+    source$.next(null);
   };
 
-  const connect = (source: ConnectableSource<T, E>) => {
-    disconnect();
+  const connect = (source: ConnectableSource<T, E>) => source$.next(source);
 
-    const isObservale = isObservable(source);
-    const isStatefulObservable = isStatefulObservableFn(source);
+  const raw = source$.pipe(
+    switchMap((source): Observable<ResponseWithStatus<T, E>> => {
+      if (!source) {
+        return of({
+          state: inactiveSymbol,
+        } as const);
+      }
 
-    const relayObserver = makeRelayObserver(relay$);
+      if (isStatefulObservableFn(source)) {
+        return source.raw$;
+      } else {
+        return from(source).pipe(
+          concatMap((event) =>
+            of(event).pipe(
+              startWith({ state: loadingSymbol } as ResponseLoading),
+            ),
+          ),
+          catchResponseError(),
+          map((event): ResponseWithStatus<T, E> => {
+            if (isError(event)) {
+              return { state: errorSymbol, error: event.error as E };
+            }
 
-    if (isStatefulObservable) {
-      sourceSub = source.subscribe(relayObserver);
-      return;
-    }
-
-    // pending until first value from source
-    relayObserver.pending?.(true);
-
-    sourceSub = from(source)
-      .pipe(catchResponseError())
-      .subscribe({
-        next: (event) => {
-          if (isError(event)) {
-            relayObserver.error?.(event.error as E);
-            return;
-          }
-
-          relayObserver.next?.(event);
-        },
-        error: (error) => {
-          relayObserver.error?.(error as E);
-        },
-      });
-  };
+            return event;
+          }),
+        );
+      }
+    }),
+  );
 
   const connection = fillStatefulObservable<T, E, Meta>({
-    raw: relay$,
+    raw,
     name,
     meta: meta as Meta,
     internalMeta: [{ errorSubscriptions: 0, refCount }],

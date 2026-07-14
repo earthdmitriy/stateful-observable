@@ -283,7 +283,11 @@ export type StatefulObservableSubsribable<T = unknown> = {
   ): Unsubscribable;
 };
 
-export type StatefulObservableUtils<T = unknown, Error = unknown> = {
+export type StatefulObservableUtils<
+  T = unknown,
+  Error = unknown,
+  Meta = undefined,
+> = {
   /**
    * Apply a sequence of MonoType operators to the underlying `raw` stream.
    *
@@ -299,10 +303,10 @@ export type StatefulObservableUtils<T = unknown, Error = unknown> = {
    *
    * @returns A new `StatefulObservable` that reflects the applied operators.
    */
-  pipe(): StatefulObservable<NoInfer<T>, Error>;
+  pipe(): StatefulObservable<NoInfer<T>, Error, Meta>;
   pipe(
     ...operations: MonoTypeOperatorFunction<NoInfer<T>>[]
-  ): StatefulObservable<NoInfer<T>>;
+  ): StatefulObservable<NoInfer<T>, Error, Meta>;
 
   /**
    * Operate on successful values only — behaves like `Observable.prototype.pipe`
@@ -316,31 +320,31 @@ export type StatefulObservableUtils<T = unknown, Error = unknown> = {
    * Use `pipeValue(...)` for data transformations (mapping, filtering, async
    * mapping of the payload) while keeping the stateful semantics intact.
    */
-  pipeValue(): StatefulObservable<T, Error>;
+  pipeValue(): StatefulObservable<T, Error, Meta>;
   // omit error type because stream can fail with another error
-  pipeValue<A>(op1: OperatorFunction<T, A>): StatefulObservable<A>;
+  pipeValue<A>(op1: OperatorFunction<T, A>): StatefulObservable<A, Error, Meta>;
   pipeValue<A, B>(
     op1: OperatorFunction<T, A>,
     op2: OperatorFunction<A, B>,
-  ): StatefulObservable<B>;
+  ): StatefulObservable<B, Error, Meta>;
   pipeValue<A, B, C>(
     op1: OperatorFunction<T, A>,
     op2: OperatorFunction<A, B>,
     op3: OperatorFunction<B, C>,
-  ): StatefulObservable<C>;
+  ): StatefulObservable<C, Error, Meta>;
   pipeValue<A, B, C, D>(
     op1: OperatorFunction<T, A>,
     op2: OperatorFunction<A, B>,
     op3: OperatorFunction<B, C>,
     op4: OperatorFunction<C, D>,
-  ): StatefulObservable<D>;
+  ): StatefulObservable<D, Error, Meta>;
   pipeValue<A, B, C, D, E>(
     op1: OperatorFunction<T, A>,
     op2: OperatorFunction<A, B>,
     op3: OperatorFunction<B, C>,
     op4: OperatorFunction<C, D>,
     op5: OperatorFunction<D, E>,
-  ): StatefulObservable<E>;
+  ): StatefulObservable<E, Error, Meta>;
   pipeValue<A, B, C, D, E, F>(
     op1: OperatorFunction<T, A>,
     op2: OperatorFunction<A, B>,
@@ -348,7 +352,7 @@ export type StatefulObservableUtils<T = unknown, Error = unknown> = {
     op4: OperatorFunction<C, D>,
     op5: OperatorFunction<D, E>,
     op6: OperatorFunction<E, F>,
-  ): StatefulObservable<F>;
+  ): StatefulObservable<F, Error, Meta>;
   pipeValue<A, B, C, D, E, F, G>(
     op1: OperatorFunction<T, A>,
     op2: OperatorFunction<A, B>,
@@ -357,7 +361,7 @@ export type StatefulObservableUtils<T = unknown, Error = unknown> = {
     op5: OperatorFunction<D, E>,
     op6: OperatorFunction<E, F>,
     op7: OperatorFunction<F, G>,
-  ): StatefulObservable<G>;
+  ): StatefulObservable<G, Error, Meta>;
   pipeValue<A, B, C, D, E, F, G, H>(
     op1: OperatorFunction<T, A>,
     op2: OperatorFunction<A, B>,
@@ -367,7 +371,7 @@ export type StatefulObservableUtils<T = unknown, Error = unknown> = {
     op6: OperatorFunction<E, F>,
     op7: OperatorFunction<F, G>,
     op8: OperatorFunction<G, H>,
-  ): StatefulObservable<H>;
+  ): StatefulObservable<H, Error, Meta>;
   pipeValue<A, B, C, D, E, F, G, H, I>(
     op1: OperatorFunction<T, A>,
     op2: OperatorFunction<A, B>,
@@ -378,7 +382,7 @@ export type StatefulObservableUtils<T = unknown, Error = unknown> = {
     op7: OperatorFunction<F, G>,
     op8: OperatorFunction<G, H>,
     op9: OperatorFunction<H, I>,
-  ): StatefulObservable<I>;
+  ): StatefulObservable<I, Error, Meta>;
   pipeValue<A, B, C, D, E, F, G, H, I>(
     op1: OperatorFunction<T, A>,
     op2: OperatorFunction<A, B>,
@@ -390,7 +394,7 @@ export type StatefulObservableUtils<T = unknown, Error = unknown> = {
     op8: OperatorFunction<G, H>,
     op9: OperatorFunction<H, I>,
     ...operations: OperatorFunction<any, any>[]
-  ): StatefulObservable<unknown>;
+  ): StatefulObservable<unknown, Error, Meta>;
 
   /**
    * Transform error payloads emitted by the `error$` stream.
@@ -410,30 +414,30 @@ export type StatefulObservableUtils<T = unknown, Error = unknown> = {
    * `isValidationError(err)` inside your operator to choose the mapped value
    * and preserve strong typing across `pipeError` chains.
    */
-  pipeError(): StatefulObservable<T, Error>;
-  pipeError<A>(op1: OperatorFunction<T, A>): StatefulObservable<T, A>;
+  pipeError(): StatefulObservable<T, Error, Meta>;
+  pipeError<A>(op1: OperatorFunction<T, A>): StatefulObservable<T, A, Meta>;
   pipeError<A, B>(
     op1: OperatorFunction<T, A>,
     op2: OperatorFunction<A, B>,
-  ): StatefulObservable<T, B>;
+  ): StatefulObservable<T, B, Meta>;
   pipeError<A, B, C>(
     op1: OperatorFunction<T, A>,
     op2: OperatorFunction<A, B>,
     op3: OperatorFunction<B, C>,
-  ): StatefulObservable<T, C>;
+  ): StatefulObservable<T, C, Meta>;
   pipeError<A, B, C, D>(
     op1: OperatorFunction<T, A>,
     op2: OperatorFunction<A, B>,
     op3: OperatorFunction<B, C>,
     op4: OperatorFunction<C, D>,
-  ): StatefulObservable<T, D>;
+  ): StatefulObservable<T, D, Meta>;
   pipeError<A, B, C, D, E>(
     op1: OperatorFunction<T, A>,
     op2: OperatorFunction<A, B>,
     op3: OperatorFunction<B, C>,
     op4: OperatorFunction<C, D>,
     op5: OperatorFunction<D, E>,
-  ): StatefulObservable<T, E>;
+  ): StatefulObservable<T, E, Meta>;
   pipeError<A, B, C, D, E, F>(
     op1: OperatorFunction<T, A>,
     op2: OperatorFunction<A, B>,
@@ -441,7 +445,7 @@ export type StatefulObservableUtils<T = unknown, Error = unknown> = {
     op4: OperatorFunction<C, D>,
     op5: OperatorFunction<D, E>,
     op6: OperatorFunction<E, F>,
-  ): StatefulObservable<T, F>;
+  ): StatefulObservable<T, F, Meta>;
   pipeError<A, B, C, D, E, F, G>(
     op1: OperatorFunction<T, A>,
     op2: OperatorFunction<A, B>,
@@ -450,7 +454,7 @@ export type StatefulObservableUtils<T = unknown, Error = unknown> = {
     op5: OperatorFunction<D, E>,
     op6: OperatorFunction<E, F>,
     op7: OperatorFunction<F, G>,
-  ): StatefulObservable<T, G>;
+  ): StatefulObservable<T, G, Meta>;
   pipeError<A, B, C, D, E, F, G, H>(
     op1: OperatorFunction<T, A>,
     op2: OperatorFunction<A, B>,
@@ -460,7 +464,7 @@ export type StatefulObservableUtils<T = unknown, Error = unknown> = {
     op6: OperatorFunction<E, F>,
     op7: OperatorFunction<F, G>,
     op8: OperatorFunction<G, H>,
-  ): StatefulObservable<T, H>;
+  ): StatefulObservable<T, H, Meta>;
   pipeError<A, B, C, D, E, F, G, H, I>(
     op1: OperatorFunction<T, A>,
     op2: OperatorFunction<A, B>,
@@ -471,7 +475,7 @@ export type StatefulObservableUtils<T = unknown, Error = unknown> = {
     op7: OperatorFunction<F, G>,
     op8: OperatorFunction<G, H>,
     op9: OperatorFunction<H, I>,
-  ): StatefulObservable<T, I>;
+  ): StatefulObservable<T, I, Meta>;
   pipeError<A, B, C, D, E, F, G, H, I>(
     op1: OperatorFunction<T, A>,
     op2: OperatorFunction<A, B>,
@@ -483,7 +487,7 @@ export type StatefulObservableUtils<T = unknown, Error = unknown> = {
     op8: OperatorFunction<G, H>,
     op9: OperatorFunction<H, I>,
     ...operations: OperatorFunction<any, any>[]
-  ): StatefulObservable<T, unknown>;
+  ): StatefulObservable<T, unknown, Meta>;
 
   /**
    * Returns a new `StatefulObservable` with the same stream and behavior but
@@ -535,7 +539,7 @@ export type StatefulObservable<
 > = StatefulObservableRaw<T, Error> &
   StatefulObservableStreams<T, Error> &
   MimicObservable<T> & // order matters, StatefulObservableUtils should override signature of pipe
-  StatefulObservableUtils<T, Error> &
+  StatefulObservableUtils<T, Error, Meta> &
   StatefulObservableSubsribable<T> &
   StatefulObservableInfo<Meta> &
   InteropObservable<T>;

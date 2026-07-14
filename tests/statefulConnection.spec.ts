@@ -3,6 +3,7 @@ import {
   defer,
   delay,
   firstValueFrom,
+  interval,
   map,
   of,
   take,
@@ -129,7 +130,7 @@ describe("statefulConnection", () => {
       conn.connect(of("ok"));
 
       expect(rawEvents).toEqual(
-        expect.arrayContaining([{ state: loadingSymbol }, "ok"]),
+        expect.arrayContaining([{ state: inactiveSymbol }, "ok"]),
       );
       expect(await firstValueFrom(conn.value$)).toEqual("ok");
 
@@ -140,7 +141,6 @@ describe("statefulConnection", () => {
       const conn = statefulConnection<string, string>();
       const rawEvents: ResponseWithStatus<string, string>[] = [];
 
-      conn.error$.subscribe();
       const rawSub = conn.raw$.subscribe((event) => rawEvents.push(event));
 
       conn.connect(throwError(() => "fail"));
@@ -148,7 +148,7 @@ describe("statefulConnection", () => {
       expect(await firstValueFrom(conn.error$)).toEqual("fail");
       expect(rawEvents).toEqual(
         expect.arrayContaining([
-          { state: loadingSymbol },
+          { state: inactiveSymbol },
           { state: errorSymbol, error: "fail" },
         ]),
       );
@@ -205,6 +205,37 @@ describe("statefulConnection", () => {
       root.connect(of(3));
 
       expect(await firstValueFrom(conn.value$)).toEqual(30);
+    });
+
+    it("delay", async () => {
+      const root = statefulConnection<number>();
+      const conn = root.pipeValue(
+        delay(0),
+        map((v) => v * 10),
+      );
+      root.connect(of(3));
+
+      const res = await firstValueFrom(conn.raw$.pipe(take(2), toArray()));
+
+      expect(res).toEqual([{ state: loadingSymbol }, 30]);
+    });
+
+    it("sequence", async () => {
+      const root = statefulConnection<number>();
+      const conn = root.pipeValue(
+        delay(0),
+        map((v) => v * 10),
+      );
+      root.connect(interval(0).pipe(map((v, i) => i)));
+
+      const res = await firstValueFrom(conn.raw$.pipe(take(4), toArray()));
+
+      expect(res).toEqual([
+        { state: loadingSymbol },
+        0,
+        { state: loadingSymbol },
+        10,
+      ]);
     });
   });
 });

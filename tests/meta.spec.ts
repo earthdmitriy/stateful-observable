@@ -1,5 +1,4 @@
 import { BehaviorSubject, map } from "rxjs";
-import { combineStatefulObservables } from "../src/combineStatefulObservables";
 import { statefulConnection } from "../src/statefulConnection";
 import { statefulObservable } from "../src/statefulObservable";
 import { Equal, Expect } from "./test.utils";
@@ -87,21 +86,6 @@ describe("meta", () => {
     });
   });
 
-  describe("combineStatefulObservables", () => {
-    it("combined has meta undefined", () => {
-      const s1 = statefulObservable({
-        input: new BehaviorSubject(1),
-      });
-      const s2 = statefulObservable({
-        input: new BehaviorSubject(2),
-      });
-
-      const combined = combineStatefulObservables([s1, s2], ([a, b]) => a + b);
-
-      expect(combined.meta).toBeUndefined();
-    });
-  });
-
   describe("type inference", () => {
     it("statefulObservable without meta defaults to undefined", () => {
       const stream = statefulObservable({
@@ -126,7 +110,7 @@ describe("meta", () => {
         meta: { tag: "test" },
       }).pipeValue(map((v) => v * 10));
 
-      type Test = Expect<Equal<typeof stream.meta, undefined>>;
+      type Test = Expect<Equal<typeof stream.meta, { tag: string }>>;
     });
 
     it("pipeError preserves meta type", () => {
@@ -135,7 +119,7 @@ describe("meta", () => {
         meta: { tag: "test" },
       }).pipeError(map((e: unknown) => String(e)));
 
-      type Test = Expect<Equal<typeof stream.meta, undefined>>;
+      type Test = Expect<Equal<typeof stream.meta, { tag: string }>>;
     });
 
     it(".with({ meta }) infers new meta type", () => {
@@ -170,32 +154,36 @@ describe("meta", () => {
       type Test = Expect<Equal<typeof conn.meta, { role: string }>>;
     });
 
-    it("combineStatefulObservables has meta type undefined", () => {
-      const s1 = statefulObservable({
-        input: new BehaviorSubject(1),
-      });
-      const s2 = statefulObservable({
-        input: new BehaviorSubject(2),
+    it("statefulConnection with meta keep meta after pipeValue", () => {
+      const conn = statefulConnection<number, unknown, { role: string }>({
+        meta: { role: "admin" },
       });
 
-      const combined = combineStatefulObservables([s1, s2], ([a, b]) => a + b);
-
-      type Test = Expect<Equal<typeof combined.meta, undefined>>;
+      type Test = Expect<Equal<typeof conn.meta, { role: string }>>;
     });
 
-    it("combineStatefulObservables with meta handle input types", () => {
-      const s1 = statefulObservable({
-        input: new BehaviorSubject(1),
-        meta: { x: 1 } as const,
-      });
-      const s2 = statefulObservable({
-        input: new BehaviorSubject(2),
-        meta: { y: 2 } as const,
-      });
+    it("statefulConnection with meta keep meta after pipeValue", () => {
+      const conn = statefulConnection<number, unknown, { role: string }>({
+        meta: { role: "admin" },
+      }).pipeValue();
 
-      const combined = combineStatefulObservables([s1, s2], ([a, b]) => a + b);
+      type Test = Expect<Equal<typeof conn.meta, { role: string }>>;
+    });
 
-      type Test = Expect<Equal<typeof combined.meta, undefined>>;
+    it("statefulConnection with meta keep meta after pipe", () => {
+      const conn = statefulConnection<number, unknown, { role: string }>({
+        meta: { role: "admin" },
+      }).pipe();
+
+      type Test = Expect<Equal<typeof conn.meta, { role: string }>>;
+    });
+
+    it("statefulConnection with meta keep meta after pipeError", () => {
+      const conn = statefulConnection<number, unknown, { role: string }>({
+        meta: { role: "admin" },
+      }).pipeError();
+
+      type Test = Expect<Equal<typeof conn.meta, { role: string }>>;
     });
   });
 });
