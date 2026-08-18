@@ -1,4 +1,4 @@
-import { BehaviorSubject, Observable, switchMap, throwError } from "rxjs";
+import { BehaviorSubject, Observable, of, switchMap, throwError } from "rxjs";
 import { combineStatefulObservables } from "../src/combineStatefulObservables";
 import { statefulObservable } from "../src/statefulObservable";
 
@@ -195,5 +195,69 @@ describe("fallback logging", () => {
       "Unhandled error in statefulObservable '[TestStream, SecondStream] #0'\nSubscribe to the 'error$' stream to handle and silence these errors.\nError details:",
       ["err", false]
     );
+  });
+});
+
+describe("custom log", () => {
+  it("logs input, pending and value in serializable shape", () => {
+    const events: unknown[] = [];
+    const input = new BehaviorSubject(1);
+    const stream = statefulObservable({
+      input,
+      loader: (id: number) => of(id * 10),
+      name: "n",
+      log: (value) => {
+        events.push(value);
+      },
+    });
+
+    stream.raw$.subscribe();
+
+    expect(events).toEqual([
+      { pending: true },
+      { input: 1 },
+      { value: 10 },
+      { value: 10 },
+    ]);
+  });
+
+  it("logs error in serializable shape", () => {
+    const events: unknown[] = [];
+    const input = new BehaviorSubject(1);
+    const stream = statefulObservable({
+      input,
+      loader: () => throwError(() => "err"),
+      name: "n",
+      log: (value) => {
+        events.push(value);
+      },
+    });
+
+    stream.error$.subscribe();
+    stream.raw$.subscribe();
+
+    expect(events).toEqual([
+      { pending: true },
+      { input: 1 },
+      { error: "err" },
+      { error: "err" },
+    ]);
+  });
+
+  it("logs inactive in serializable shape", () => {
+    const events: unknown[] = [];
+    const stream = statefulObservable({
+      input: new BehaviorSubject(1),
+      loader: (id: number) => of(id),
+      active: of(false),
+      name: "n",
+      log: (value) => {
+        events.push(value);
+      },
+    });
+
+    stream.raw$.subscribe();
+
+    expect(events).toEqual([{ inactive: true }]);
   });
 });

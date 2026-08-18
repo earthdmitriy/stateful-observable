@@ -15,12 +15,10 @@ import {
 import { createCache } from "./cache";
 import { fillStatefulObservable } from "./fillStatefulObservable";
 import { catchResponseError, mapToLoading } from "./operators";
-import { inactiveSymbol, isError } from "./response-container";
+import { inactiveSymbol, serializeResponse } from "./response-container";
 import {
-  FlatResponseContainer,
   ParamsWithInput,
   ParamsWithLoader,
-  ResponseError,
   ResponseInactive,
   StatefulObservable,
   StatefulObservableParams,
@@ -34,15 +32,6 @@ const expandInput = <Input, Response, Meta>(
   if (typeof params === "function") return { loader: params };
   if (isObservable(params)) return { input: params };
   return params;
-};
-
-export const flattenResponse = <Response, Error>(
-  response: ResponseError<Error> | Response,
-): FlatResponseContainer<Response, Error> => {
-  if (isError(response)) {
-    return { error: response.error };
-  }
-  return { value: response };
 };
 
 /**
@@ -164,7 +153,7 @@ export const statefulObservable = <Input, Response = Input, Meta = undefined>(
     }),
     catchResponseError(),
     tap((raw) => {
-      if (log) log(flattenResponse(raw), name, 0);
+      if (log) log(serializeResponse(raw), name, 0);
     }),
   );
 

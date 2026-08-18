@@ -6,8 +6,8 @@ import {
   isLoading,
   isSuccess,
   metaSymbol,
+  serializeResponse,
 } from "./response-container";
-import { flattenResponse } from "./statefulObservable";
 import { makeSubscribe } from "./subscribable";
 import {
   LogFn,
@@ -49,11 +49,8 @@ export const fillStatefulObservable = <Result, Error, Meta = undefined>({
   const index = prevIndex + 1;
 
   const sideEffect = log
-    ? tap<ResponseWithStatus<Result, Error>>(
-        (value) =>
-          !isLoading(value) &&
-          !isInactive(value) &&
-          log(flattenResponse(value), name, index),
+    ? tap<ResponseWithStatus<Result, Error>>((value) =>
+        log(serializeResponse(value), name, index),
       )
     : tap<ResponseWithStatus<Result, Error>>((value) => {
         if (isError(value) && !internalMeta.some((m) => m.errorSubscriptions)) {

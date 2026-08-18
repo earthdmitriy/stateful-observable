@@ -20,6 +20,7 @@ npm install @rx-evo/stateful-observable
 - Dynamic source switching via `statefulConnection` — connect or disconnect a data source at runtime without rebuilding the pipe chain
 - Implements caching and retry functionality
 - Implements InteropObservable - can replace vanilla Observables anywhere
+- `ResponseDto` — serializable ResponseContainer for logs and network (`serializeResponse` / `deserializeResponse`)
 
 ## Usage
 
@@ -134,6 +135,8 @@ Creates a new stateful observable wrapper.
 - `mapOperator`: (Optional) Custom operator for mapping values (defaults to switchMap)
 - `cacheKey`: Method mapping input to key identifying the query
 - `cacheSize`: Cache size. Defaults to 42. Cache uses an LRU-like strategy
+- `name`: (Optional) Debug name used in error messages and `log`
+- `log`: (Optional) Called for each event with a `ResponseDto` (and `{ input }` on the root)
 - `meta`: (Optional) Arbitrary metadata attached to the observable instance, accessible via `.meta`
 
 #### Returns
@@ -260,6 +263,35 @@ Before the first `connect` and after `disconnect`, the connection is inactive (s
 
 `reload()` is a no-op on connections.
 
+#### `serializeResponse()` / `deserializeResponse()`
+
+`ResponseWithStatus` uses `Symbol.for` sentinels, so it is stable across bundled copies of the package but is not JSON-safe.
+
+`ResponseDto` is the serializable ResponseContainer:
+
+```typescript
+type ResponseDto<T, E = unknown> =
+  | { value: T }
+  | { pending: true }
+  | { inactive: true }
+  | { error: E };
+```
+
+Success is always `{ value }`, so user data such as `{ pending: true }` cannot collide with a loading sentinel.
+
+```typescript
+import {
+  serializeResponse,
+  deserializeResponse,
+} from "@rx-evo/stateful-observable";
+
+const dto = serializeResponse(rawEvent);
+const json = JSON.stringify(dto);
+const restored = deserializeResponse(JSON.parse(json));
+```
+
+The optional `log` callback receives this same `ResponseDto` shape (plus `{ input }` on the root node), including pending and inactive events.
+
 ## State Management Example
 
 ```typescript
@@ -308,11 +340,13 @@ type ResponseWithStatus<T, E = unknown> =
   | ResponseError<E>
   | T;
 
-const statefulObservable: StatefulObservable<User, UserErrors> = create();
+const stream: StatefulObservable<User, UserErrors> = create();
 
 const rawStream: Observable<ResponseWithStatus<User, UserErrors>> =
-  statefulObservable.raw;
+  stream.raw$;
 ```
+
+Sentinel symbols are registered with `Symbol.for("@rx-evo/stateful-observable/...")`, so type guards work even when several copies of the package are bundled. For logs and the network, convert to `ResponseDto` with `serializeResponse`.
 
 By default the `raw` stream is cached using `shareReplay({ bufferSize: 1, refCount: true })`, but you can apply your own caching strategy, for example:
 
@@ -427,6 +461,14 @@ You might find answers here.
 Or create new issue https://github.com/earthdmitriy/stateful-observable/issues
 
 ## Changelog
+
+0.6.0
+- `ResponseDto` — serializable ResponseContainer for logs and network
+  - `{ value } | { pending: true } | { inactive: true } | { error }`
+  - success is always wrapped as `{ value }`, so user data cannot collide with sentinels
+- `serializeResponse` / `deserializeResponse` — convert `ResponseWithStatus` ↔ `ResponseDto`
+- sentinel symbols registered via `Symbol.for` — same identity across bundled copies of the package
+- `log` callback now receives `ResponseDto` (including pending and inactive)
 
 0.5.0
 - `statefulConnection` — factory for dynamic wiring to a data source

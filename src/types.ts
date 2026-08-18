@@ -31,22 +31,23 @@ export type ResponseError<E = unknown> = {
 export type ResponseWithStatus<T, E = unknown> =
   ResponseInactive | ResponseLoading | ResponseError<E> | T;
 
-export type FlatResponseContainer<Value, Error = unknown> =
-  | {
-      value: Value;
-    }
-  | {
-      error: Error;
-    };
+/**
+ * Serializable ResponseContainer for logs and network transfer.
+ *
+ * Unlike {@link ResponseWithStatus}, every variant is a plain object
+ * (success is `{ value }`), so the shape is safe for `JSON.stringify`.
+ */
+export type ResponseDto<T, E = unknown> =
+  { value: T } | { pending: true } | { inactive: true } | { error: E };
 
-export type LogFnWithInput<Input, Response> = (
-  value: { input: Input } | FlatResponseContainer<Response>,
+export type LogFnWithInput<Input, Response, Error = unknown> = (
+  value: { input: Input } | ResponseDto<Response, Error>,
   name: string,
   index: number,
 ) => void;
 
 export type LogFn<Response, Error> = (
-  value: FlatResponseContainer<Response, Error>,
+  value: ResponseDto<Response, Error>,
   name: string,
   index: number,
 ) => void;
