@@ -2,6 +2,8 @@
 
 A TypeScript library that provides a stateful wrapper for RxJS observables, making it easier to handle loading state, errors, and data streams in a consistent way.
 
+> **Purity is the path of least resistance.**
+
 ## Installation
 
 ```bash
@@ -41,14 +43,14 @@ const entity$ = client$.pipeValue(
 // Another stream
 const bucket$ = clientId$.pipeValue(switchMap((id) => fetchClientBucket(id)));
 
-// Data can be cached and shared (add operators like `shareReplay` as needed)
-const products$ = statefulObservable(() => fetchProducts()).pipe(
-  takeUntilDestroyed(),
-  shareReplay(1),
-);
+// Every stream is shared; `refCount: false` keeps it without subscribers
+const products$ = statefulObservable({
+  loader: () => fetchProducts(),
+  refCount: false,
+});
 
 // Combine stateful observables into a single derived stream
-const processedBucket$ = combineStatefulObservable(
+const processedBucket$ = combineStatefulObservables(
   [bucket$, inject(productCatalog)],
   ([bucket, products]) => prepareBucket(bucket, products),
 ).pipeError(
@@ -146,12 +148,25 @@ Returns a `StatefulObservable` object with the following properties:
 - `raw$`: The raw observable containing all states (loading, error, success)
 - `value$`: Observable that emits only successful values
 - `error$`: Observable that emits only error states
-- `pending$`: Observable that emits boolean loading states
-- `reload`: Function to trigger a manual reload
+- `pending$`: Observable that emits boolean loading states: `true` while a change was started and has no result yet
+- `reload(options?)`: Function to trigger a manual reload; `{ onlyFailed, where, path }` narrow it to failed, matching or positioned sources (see below)
 - `pipe(...)`: Method to apply operators to the raw observable
 - `pipeValue(...)`: Method to transform successful values
 - `pipeError(...)`: Method to transform error states
 - `with(options)`: Returns a new `StatefulObservable` with updated name and/or meta
+
+Loading is emitted only for work that does not finish synchronously. A synchronous result (an input-only node, a loader returning `of(...)`, a cache hit) comes without a loading event. A pipe whose operators do not finish synchronously (a request inside `pipeValue`, a `delay`) emits its own loading.
+
+Operators inside `pipe`, `pipeValue` and `pipeError` behave as in plain RxJS, with a few guarantees on top:
+
+- they run as one pipeline per node, so operators that keep state across values work (`scan`, `distinctUntilChanged`, `startWith`), the operator decides about concurrency (`switchMap` switches, `mergeMap` runs every value), and operators that hold context decide how long the node stays connected (`shareReplay(1)` keeps it);
+- an error thrown inside becomes an error event, and the stream keeps processing later values (operator state restarts after the error);
+- a result that arrives after a newer loading or error event has passed is outdated and dropped;
+- `inactive` cancels work in flight and resets operator state;
+- an operator that completes the stream (`takeUntilDestroyed()`, `takeUntil`, `take`, `first`) completes the subscribers and releases the source, so `stream.pipe(takeUntilDestroyed()).subscribe(...)` cleans up on destroy;
+- a value dropped by an operator (`filter`, `distinctUntilChanged`) leaves the node pending: a change was started and has no result. To start nothing at all, apply such operators to the input instead.
+
+A root does not complete when its input does: it lives as long as the application, is deactivated with `active` rather than ended, and stays ready for `reload()`. Only leaves in disposable components and services end, for example with `takeUntilDestroyed()`. So operators that act on completion (`reduce`, `last`, `toArray`, `count`) do not emit when applied directly to the live stream; inside a higher-order operator they work as usual, because the inner stream completes (`switchMap((id) => api.page(id).pipe(toArray()))`). A timer applied to the live stream runs until its leaf ends; see the [ADR](https://github.com/earthdmitriy/stateful-observable/blob/main/docs/adr.md#roots-do-not-complete).
 
 ## Error Handling
 
@@ -222,7 +237,7 @@ const combined = combineStatefulObservables(
 );
 ```
 
-It aware of error type
+It is aware of the error type:
 
 ```typescript
 const combined = combineStatefulObservables(
@@ -233,6 +248,52 @@ const combined = combineStatefulObservables(
   map(([e1, e2]) => mapError(e1, e2)),
 );
 ```
+
+`reload()` on a combined node calls `reload()` on every source (through nested combined nodes and pipes). `reload(options?)` narrows that down:
+
+```typescript
+combined.reload(); // reload all sources
+combined.reload({ onlyFailed: true }); // only the sources that are currently failed
+combined.reload({ where: ({ meta }) => isProducts(meta) }); // only the matching part
+combined.reload({ onlyFailed: true, where: ({ name }) => name === "catalog" }); // both
+combined.reload({ path: [0, 1] }); // by position: source 0, then its source 1
+```
+
+With `onlyFailed` a failed source is reloaded, a source that is itself a combined node recurses into its own failed sources, and loading, inactive or healthy sources are not refetched (so with no failed source nothing is refetched). A plain `statefulObservable` root ignores `onlyFailed` and reloads. The node knows the sources' latest state only while it has subscribers; if there is no such information (never subscribed, or the last subscriber left so `refCount` reset the stream) it falls back to reloading all sources.
+
+With `where`, every node on the way from the handle to the roots is checked against its own `name` and `meta` (including meta set with `.with()`). A match reloads that node's whole subtree; a root with no match on its way is not reloaded. The search covers only the graph behind the handle you call it on, so the caller needs no references to the sources. `meta` is `unknown` in the predicate, because sources carry different meta types; narrow it with a type guard.
+
+The selector does not have to be a string literal: take it from the derived stream itself, so renaming it cannot break the retry.
+
+```typescript
+const productsTag = { area: "products" };
+
+const catalog$ = allProducts$
+  .pipeValue(map(toCatalog))
+  .with({ name: "catalog", meta: productsTag });
+
+const basket$ = combineStatefulObservables(
+  [bucket$, catalog$],
+  ([bucket, catalog]) => prepareBasket(bucket, catalog),
+);
+
+// retry only the catalog part of the basket
+basket$.reload({ where: ({ name }) => name === catalog$.name });
+// or by meta: compared by identity, so no type guard is needed
+basket$.reload({ where: ({ meta }) => meta === catalog$.meta });
+```
+
+`path` addresses a source by position instead, which needs no names at all. Only combinations count as hops; pipes and `.with()` are passed through. The positions are the same as in the nested `error$` tuple, so a per-source error view already has the path of the failed source:
+
+```typescript
+// [[bucket, catalog], user]: error$ emits [[false, catalogError], false]
+const page$ = combineStatefulObservables([basket$, user$], ([basket, user]) => ({ basket, user }));
+
+page$.reload({ path: [0, 1] }); // catalog only
+page$.reload({ path: [0], onlyFailed: true }); // failed sources of the basket
+```
+
+`path` is followed first, then `onlyFailed` and `where` apply inside the part it reaches. An index out of range, or a path deeper than the graph, reloads nothing. A hard-coded path depends on the order of sources, so prefer `where` with a name unless the path comes from `error$`. See the [ADR](https://github.com/earthdmitriy/stateful-observable/blob/main/docs/adr.md#selective-reload-of-a-derived-graph).
 
 #### `statefulConnection(options?)`
 
@@ -348,13 +409,13 @@ const rawStream: Observable<ResponseWithStatus<User, UserErrors>> =
 
 Sentinel symbols are registered with `Symbol.for("@rx-evo/stateful-observable/...")`, so type guards work even when several copies of the package are bundled. For logs and the network, convert to `ResponseDto` with `serializeResponse`.
 
-By default the `raw` stream is cached using `shareReplay({ bufferSize: 1, refCount: true })`, but you can apply your own caching strategy, for example:
+By default every node caches its `raw` stream with `shareReplay({ bufferSize: 1, refCount: true })`: subscribers share one request, and the stream is released when the last one leaves. Pass `refCount: false` to keep it without subscribers (chained nodes inherit it):
 
 ```typescript
-const statefulObservable: StatefulObservable<User, UserErrors> = create().pipe(
-  shareReplay(1),
-);
+const user$ = statefulObservable({ loader: () => fetchUser(), refCount: false });
 ```
+
+Operators passed to `.pipe(...)` decide how long they keep the node: when the last subscriber leaves, the node stays connected for as long as the operators hold on to it. `.pipe(shareReplay(1))` keeps it alive and replays to the next subscriber, `map` lets go at once, and `share({ resetOnRefCountZero: () => timer(5000) })` lets go five seconds later. A returning subscriber gets the latest state (a newer loading or error wins over a buffered value). `refCount: false` keeps a node alive without any operator. For time-based policies, wrap the loader's observable or drive `reload()` (see [compare.md](https://github.com/earthdmitriy/stateful-observable/blob/main/docs/compare.md), "Caching strategies compose with RxJS").
 
 Only the last value is cached.
 
@@ -369,7 +430,7 @@ const error = raw.pipe(
 const pending = raw.pipe(map(isLoading));
 ```
 
-Angular template for example
+Angular template example:
 
 ```html
 <div [class.loading]="statefulObservable.pending$ | async">
@@ -401,9 +462,9 @@ Angular template for example
                     └──────────────────────────┘                                         
 ```
 
-And, where magic happens. As you remember only last value being cached in raw stream.
+And here is where the magic happens. As you remember, only the last value is cached in the raw stream.
 
-Let's imagine it 'loading' event.
+Let's imagine it is a 'loading' event.
 Template will get:
 
 - Loading: true
@@ -437,13 +498,15 @@ The data (or error) is retained until a new data (or error) event appears. This 
 
 ## How does this compare to pure RxJS?
 
+For a side-by-side comparison with vanilla RxJS, Angular signals and resources, and NgRx, including where each one is the better choice, see https://github.com/earthdmitriy/stateful-observable/blob/main/docs/compare.md
+
 Stateful Observables are a purposeful abstraction built on top of RxJS.
 
 - Origin: They were created to solve the repetitive boilerplate of handling loading, error, and data states in a large Angular application.
 
 - Purpose: They encapsulate common patterns so you don't have to rebuild them repeatedly.
 
-- Relationship: They are designed to work with RxJS, not replace it. We recommend using this library for standard state management (~80% of cases) and pure RxJs for the remaining complex scenarios.
+- Relationship: They are designed to work with RxJS, not replace it. We recommend using this library for standard state management (~80% of cases) and pure RxJS for the remaining complex scenarios.
 
 ## How is this different from a global state manager (like NgRx, Akita, etc.)?
 
@@ -462,56 +525,13 @@ Or create new issue https://github.com/earthdmitriy/stateful-observable/issues
 
 ## Changelog
 
-0.6.0
-- `ResponseDto` — serializable ResponseContainer for logs and network
-  - `{ value } | { pending: true } | { inactive: true } | { error }`
-  - success is always wrapped as `{ value }`, so user data cannot collide with sentinels
-- `serializeResponse` / `deserializeResponse` — convert `ResponseWithStatus` ↔ `ResponseDto`
-- sentinel symbols registered via `Symbol.for` — same identity across bundled copies of the package
-- `log` callback now receives `ResponseDto` (including pending and inactive)
+0.7.0
+- `reload({ onlyFailed, where, path })`: reload only the failed sources, the part of the graph whose name or meta matches, or a source by position
+- cache keys are encoded as JSON: no more collisions between `1` and `"1"` or between different object inputs; key parts must be JSON-serializable
+- factory: consumers are counted, so `reset(false)` and `cacheSize` eviction never drop or duplicate a stream that is in use; no longer `@experimental`
+- fixes: `reset(true)` completes subscribers, `active: false` clears the result cache, falsy results are served from the cache, a `null` result no longer crashes the stream, a synchronous throw in a loader or `cacheKey` no longer ends the stream
 
-0.5.0
-- `statefulConnection` — factory for dynamic wiring to a data source
-  - `connect(source)` — `StatefulObservable` or vanilla `ObservableInput<T>`
-    - stateful: forwards loading/error/value/inactive via `raw$`
-    - vanilla: loading → value(s), errors via `catchResponseError`
-  - `disconnect()` — unsubscribes and emits inactive
-  - disconnected / before first connect — inactive (same as `active: false`)
-- `meta` — arbitrary metadata attached to a `StatefulObservable`, accessible via `.meta`
-  - set via `options.meta` at creation
-  - preserved through `pipeValue`, `pipeError`, and `pipe` chains
-- `.with(options)` — returns a new `StatefulObservable` with updated name and/or meta (replaces `rename`)
-
-0.4.0
-- `statefulObservable` implements InteropObservable
-  - it mean that `statefulObservable` can be used everywhere where rxjs expect Observable as input, e.g. merge, combineLatest, firstValueFrom, high-order operators
-  - resulting observable won't provide benefits from `statefulObservable`, but it might be useful for interop with existing code
-- changed internal behavior of pipes
-  - when new input value arrives current processing chain will be unsubscribed
-  - should prevent rare race conditions when outdated projected data overrides more recent projected data
-- `active` input parameter - if provided and emits `false` - `statefulObservable` will be temporarily disabled
-  - it will cleanup all internal data
-  - and won't emit any event until `active` become `true`
-  - while keeping all subcriptions alive
-- `refCount` input parameter
-  - by default `true`
-  - can be set to `false` to prevent cleanup in shared streams
-  - chained nodes will inherit `refCount` of parent
-  - `combineStatefulObservables` prioritize `refCount: true` in sources
-
-0.3.0
-- `statefulObservable` will log errors in pipes with `console.error` so errors aren't unintentionally muted
-  - only if no one is subscribed to `error$`
-- new parameters for debugging
-  - `log` to track any event in chain
-  - `name` to assign public name for stream - should help identifying event source
-
-0.2.0
-- `subscribe` method on `statefulObservable`. This makes it easy to pass the observable directly into an async pipe or convert it to a signal with `toSignal`.
-- statefulObservable constructor - shorthands `statefulObservable(myInput$)` for input and `statefulObservable(() => http.get("/items"))` for loader
-
-0.1.0
-- option defining cacheKey and cacheSize
+Full history: [docs/changelist.md](https://github.com/earthdmitriy/stateful-observable/blob/main/docs/changelist.md)
 
 ## License
 

@@ -36,7 +36,7 @@ export const isError = <T, E>(
 const statesSet = new Set([loadingSymbol, errorSymbol, inactiveSymbol]);
 
 export const isSuccess = <T>(response: ResponseWithStatus<T>): response is T =>
-  !(response as any).state || !statesSet.has((response as any).state);
+  !(response as any)?.state || !statesSet.has((response as any).state);
 
 /**
  * Convert a {@link ResponseWithStatus} into a {@link ResponseDto}.

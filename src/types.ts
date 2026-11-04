@@ -121,8 +121,9 @@ export type ParamsWithInput<Input, Response, Meta> = CommonParams<
 
   /**
    * Optional function that returns a cache key for a given input value.
-   * The returned array is joined internally to form a string key. If the
-   * function returns a falsy/empty array the caching logic will be skipped
+   * The returned array is encoded as JSON to form a string key, so types and
+   * part boundaries are kept apart (`1` vs `"1"`) and objects are keyed by
+   * content. Parts must be JSON-serializable. An empty array skips caching
    * for that input.
    */
   cacheKey?: (i: Input) => any[];
@@ -155,8 +156,9 @@ export type ParamsWithLoader<Input, Response, Meta> = CommonParams<
 
   /**
    * Optional function that returns a cache key for a given input value.
-   * The returned array is joined internally to form a string key. If the
-   * function returns a falsy/empty array the caching logic will be skipped
+   * The returned array is encoded as JSON to form a string key, so types and
+   * part boundaries are kept apart (`1` vs `"1"`) and objects are keyed by
+   * content. Parts must be JSON-serializable. An empty array skips caching
    * for that input.
    */
   cacheKey?: (i: Input) => any[];
@@ -191,6 +193,44 @@ export type StatefulObservableParams<Input, Response, Meta> =
  * @template T - successful result type emitted by the stream
  * @template Error - error payload type used for `ResponseError<Error>` emissions
  */
+/**
+ * What a `reload({ where })` predicate sees of a node: its public name and meta.
+ * `meta` is `unknown` because sources in one graph carry different meta types;
+ * narrow it with a type guard.
+ */
+export type ReloadTarget = { readonly name: string; readonly meta: unknown };
+
+/**
+ * Options of `reload()`.
+ *
+ * - `onlyFailed`: reload only what is currently failed. A
+ *   `combineStatefulObservables` node reloads just its failed sources,
+ *   recursively; with no failed source nothing is refetched. When the node has
+ *   no information about its sources (not subscribed, refCount reset) it falls
+ *   back to all sources. A plain `statefulObservable` root ignores it and
+ *   reloads.
+ * - `where`: reload only the part of the graph behind this handle that
+ *   matches. Every node on the way from the handle to the roots is checked
+ *   against its own `name` and `meta`; a match reloads that node's whole
+ *   subtree, and when nothing on the way to a root matches, that root is not
+ *   reloaded. The search is limited to the graph behind this handle.
+ *
+ * - `path`: source positions to follow from this handle, e.g. `[0, 1]` is
+ *   source 0 of this combined node, then source 1 of that one. Only
+ *   combinations count as hops; pipes and `.with()` nodes are passed through.
+ *   The positions are the same as in the nested `error$` tuple. An empty path
+ *   means this node; an index out of range, or a path that goes deeper than
+ *   the graph, reloads nothing.
+ *
+ * All compose. `path` is followed first; `onlyFailed` and `where` then apply
+ * inside the subtree it reaches. `statefulConnection` reload stays a no-op.
+ */
+export type ReloadOptions = {
+  readonly onlyFailed?: boolean;
+  readonly where?: (node: ReloadTarget) => boolean;
+  readonly path?: readonly number[];
+};
+
 export type StatefulObservableRaw<T = unknown, Error = unknown> = {
   /**
    * Observable that emits {@link ResponseWithStatus} values (loading|error|success).
@@ -203,8 +243,11 @@ export type StatefulObservableRaw<T = unknown, Error = unknown> = {
    * Trigger to manually refresh/reload the current input.
    *
    * @remarks useful for error recovery or force re-evaluation of the loader (and following operators in `pipeValue`) without changing the input.
+   *
+   * @param options - `onlyFailed` and `where`, see {@link ReloadOptions}.
+   *   Without options, everything behind this handle is reloaded.
    * */
-  readonly reload: () => void;
+  readonly reload: (options?: ReloadOptions) => void;
 };
 
 /**
@@ -293,9 +336,13 @@ export type StatefulObservableUtils<
    * Apply a sequence of MonoType operators to the underlying `raw` stream.
    *
    * Use `pipe(...)` when you need to operate on the full ResponseWithStatus
-   * union (loading / error / value). Typical use-cases are caching or time-
-   * based operators that must observe or preserve the loading/error sentinels
-   * (for example `shareReplay`, `debounceTime`, `throttleTime`).
+   * union (loading / error / value). The operators run as one pipeline per
+   * node, so stateful operators (`scan`, `distinctUntilChanged`) work; an
+   * error thrown inside becomes an error event and later events are still
+   * processed; `inactive` resets the pipeline. Operators that hold context
+   * decide the node's lifetime: after the last subscriber leaves, the node
+   * stays connected for as long as they hold on (`shareReplay(1)` keeps it,
+   * `share` with a reset delay keeps it for that delay).
    *
    * IMPORTANT: this method only accepts operators that are "mono-type" for
    * `ResponseWithStatus<T>` (i.e. `MonoTypeOperatorFunction<ResponseWithStatus<T>>`).

@@ -20,7 +20,7 @@ This document outlines the architectural principles, coding conventions, and Typ
 - **File structure**  
   - Group related functions into modules (e.g., `array.ts`, `option.ts`).  
   - One main export per module, with internal helpers kept private (non‑exported).    
-  - Tests are in same folder fith code in `*.spec.ts`
+  - Tests are in the `tests/` folder, in `*.spec.ts` files
   - Barrel files (`index.ts`) can re‑export public APIs.
 
 - **Formatting**  
@@ -67,6 +67,6 @@ function addItem<T>(arr: readonly T[], item: T): readonly T[] {
 
 ## Testing
 
-- **Unit tests** – Write tests for every exported function. Libraty using Jest.
+- **Unit tests** – Write tests for every exported function. The library uses Vitest (`npm run test`), with globals enabled, so `describe` and `it` need no import.
 - **Property‑based testing** – Use fast-check to verify laws (e.g., functor laws, identity, composition).
 - **Test purity** – Ensure no side effects are introduced. Mock external dependencies when unavoidable.

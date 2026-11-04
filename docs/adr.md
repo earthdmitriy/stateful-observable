@@ -108,7 +108,7 @@ Also, if you need to combine multiple requests, you require an additional utilit
 
 So the answer is:
 Resources are okay when you need to load data from a component once and don't need to combine requests.
-For anything more complex, a fine-tuned RxJs will handle it better.
+For anything more complex, a fine-tuned RxJS will handle it better.
 
 ## Solution
 
@@ -144,7 +144,7 @@ The library should provide a function to combine stateful observables out of the
 const prices$ = this.pricesService.prices;
 const bucket$ = this.bucketService.bucket$;
 // Their combination
-const totalValue$ = combineStatefulObservable(
+const totalValue$ = combineStatefulObservables(
   [prices$, bucket$],
   ([prices, bucket]) => calculateTotal(prices, bucket)
 );
@@ -226,13 +226,13 @@ const mapped = source.pipe(
     return this.api.fetchBy(valueWithState);
   })
 );
-// Syncronous mapping with a helper
+// Synchronous mapping with a helper
 const mapped = source.pipe(
-  map(onlyValue((value) => transformValue(valueWithState)))
+  map(onlyValue((value) => transformValue(value)))
 );
 // Async mapping with a helper
 const mapped = source.pipe(
-  mergeMap(onlyValueObservable((value) => this.api.fetchBy(valueWithState)))
+  mergeMap(onlyValueObservable((value) => this.api.fetchBy(value)))
 );
 ```
 
@@ -304,15 +304,15 @@ const relatedData = data.pipeValue(
 `#1` is the index in the chain; it indicates which node of the transformation chain failed.
 
 
-## Full RxJs interop
+## Full RxJS interop
 
-While having `subsribe` is enough to work with async pipe and toSignal in Angular, `statefulObservable` can't be passed into high-order RxJs operators and things like firstValueFrom don't accept `statefulObservable` because they require Observable or InteropObservable.
+While having `subscribe` is enough to work with async pipe and toSignal in Angular, `statefulObservable` can't be passed into high-order RxJS operators and things like firstValueFrom don't accept `statefulObservable` because they require Observable or InteropObservable.
 
 Pros:
-- Easier integration with existing RxJs code
+- Easier integration with existing RxJS code
 
 Cons:
-- Unfortunately `statefulObservable` need to implement interface InteropObservable and mimic class Observable.
+- Unfortunately `statefulObservable` needs to implement interface InteropObservable and mimic class Observable.
 
 ### Decision:
 - Done
@@ -331,9 +331,9 @@ Cons:
 
 ## Reimplement `active$` with additional event type in `raw` stream
 
-Previously here was 3 types of events: value, error and pending in `raw` stream. Techincally `sleeping` state can be implemented by pushing `loading` event through the chain. It has highest priority and will push value and error out of the data stream effectively invalidating cache and putting stream into kind of `sleeping` state. It seems to be simple enough because don don't require passing addtional stream through the chain. Although subsribers of `pending$` stream will be notified that something is going on, that's, techincally, not true.
+Previously here was 3 types of events: value, error and pending in `raw` stream. Technically `sleeping` state can be implemented by pushing `loading` event through the chain. It has highest priority and will push value and error out of the data stream effectively invalidating cache and putting stream into kind of `sleeping` state. It seems to be simple enough because we don't require passing additional stream through the chain. Although subscribers of `pending$` stream will be notified that something is going on, that's, technically, not true.
 
-But it can be avoided with additional event type (let's name it `inactive`) with priority even higher than `pending` event. It will push any other events out of cache, but won't be passed into actual subscriptions. Therefore goal can be achived - stream can become inactive while keeping its subscriptions.
+But it can be avoided with additional event type (let's name it `inactive`) with priority even higher than `pending` event. It will push any other events out of cache, but won't be passed into actual subscriptions. Therefore goal can be achieved - stream can become inactive while keeping its subscriptions.
 
 Pros:
 - Seems to be more elegant solution than additional `active$` stream - new event will push last value out of the `raw` stream cleaning its state
@@ -341,7 +341,7 @@ Pros:
 
 Cons:
 - Additional conditions in `value$`,`pending$` and `error$` streams, as well as in `subscribe`
-- Behavior of `pipeValue(mergeMap(()) => anotherStream)` should be amended. `statefulObservable` should ignore any events in pipes when parent node is `inacative`
+- Behavior of `pipeValue(mergeMap(()) => anotherStream)` should be amended. `statefulObservable` should ignore any events in pipes when parent node is `inactive`
 
 ### Decision:
 - Implemented
@@ -353,14 +353,110 @@ This would allow piped successors to reuse it without needing to write `shareRep
 ### Decision:
 - Implemented as optional `refCount` parameter
 
+## Pending state of a connection with a vanilla source
+
+In this library *pending* means *pending changes*: a change was started and has not produced a result yet (a loader is running, or a value is still being processed by a pipe; an operator that drops the value leaves it pending). A vanilla source connected with `statefulConnection.connect(source)` gives no sign that a change was started until it emits: a request waits and then emits, but a `Subject`, a form's `valueChanges` or a websocket may stay silent for a long time. The connection cannot tell them apart, so there is no truthful pending state to show before the first value. Pending from `connect` would be a guess, and so would a caller-supplied option such as `connect(source, { pending: true })`: it states an assumption and guarantees nothing.
+
+### Decision:
+- A vanilla source gets a loading event only together with each value; until then the connection keeps its previous state. A spinner bound to `pending$` does not show while a vanilla request waits.
+- No configuration option. Documented in [QoL](./QoL.md), "Connection", with the alternative: a stateful source brings its own pending state, for example `connect(statefulObservable({ loader: () => source$ }))`.
+
+## Error events in `subscribe` and interop
+
+`subscribe` with an object observer forwards each error event to `observer.error` and keeps delivering later values. This is outside the usual Observable contract, on purpose: the library treats a stream that stops on the first error as a design gap of vanilla RxJS.
+
+Consequences:
+- Consumers that keep listening recover. In Angular 21.1, `toSignal(stream)` throws when read after an error and returns the next value again; `stream | async` renders the next value.
+- Consumers that follow the contract stop at the first error (RxJS operators through `InteropObservable`, `firstValueFrom`); RxJS ignores whatever arrives after it.
+- With `| async`, each failed load also reaches `ErrorHandler` as an application error, so it shows up in error monitoring.
+
+### Decision:
+- Keep it. Consumers that must survive failures use `value$`, `pending$` and `error$`, which carry a failure as a value.
+
+## Selective reload of a derived graph
+
+`reload()` on a handle reloads every source behind it. A component usually holds only the final handle, so it cannot reach a single source by reference, but it often needs to: retry just the failed part, or just the catalog.
+
+`reload(options?)` takes three filters, and they compose:
+- `onlyFailed: true` reloads the sources whose latest state is an error.
+- `where: ({ name, meta }) => boolean` reloads the part whose name or meta matches. Every node from the handle down to the roots is checked, including meta set with `.with()`; a match reloads that node's subtree. This is the default way to address a source: name it where it is declared and match the string.
+- `path: number[]` follows source positions, e.g. `[0, 1]` is source 0 of the combination, then its source 1. Only combinations are hops. The positions are the same as in the nested `error$` tuple, so a UI that renders errors per source already has the path of the failed one.
+
+`path` is followed first; `onlyFailed` and `where` apply inside the subtree it reaches. No match, an index out of range, or a path deeper than the graph reloads nothing.
+
+Considered and rejected:
+- Parsing a combined node's generated name (`[[bucket, catalog], user]`): names may contain `", "`, unnamed sources are all `"unnamed"`, and the format is meant for logs.
+- A helper that lists the roots behind a handle: with `where` and `path` there is no need to discover the sources first.
+- A global registry, as with query keys in TanStack Query: the search is limited to the graph behind the handle by design, so there is no central registry to maintain.
+
+Costs:
+- `where` depends on naming: only named or tagged sources can be addressed.
+- A hard-coded `path` is a contract on the order of sources: inserting a source shifts the paths behind it. A path derived from `error$` does not have this problem.
+- `path` is `readonly number[]` and is not checked against the tuple types.
+
+### Decision:
+- Implemented as `ReloadOptions` (`onlyFailed`, `where`, `path`), replacing the unreleased `reload(onlyFailed?: boolean)`.
+
+## Loading only for asynchronous work
+
+A root used to emit loading for every input, before the result, even when the result arrived in the same tick (an input-only node, a synchronous loader, a cache hit). In a form projection such as `statefulObservable(form.valueChanges).pipeValue(map(toQuery), filter(isValid), switchMap(search))` every keystroke then put the node into loading, and a value dropped by `filter` left it there, although nothing was started. A cache hit made `pending$` flicker.
+
+With *pending* meaning "a change was started and has not produced a result yet", a change that finishes at once was never pending. So:
+- a root subscribes to the result first and emits loading only if nothing arrived synchronously;
+- a pipe does the same for each event it processes, so an asynchronous step inside `pipeValue` (a request, a `delay`) shows its own loading, and a loading event that directly follows another is dropped;
+- a value dropped by an operator *on the input* starts nothing, so it changes nothing downstream.
+
+Asynchronous loaders behave as before. Inside a pipe, a value dropped by an operator leaves the node pending (see "Operators in pipes"), so validation and deduplication that should start nothing go on the input: `statefulObservable(form.valueChanges.pipe(map(toQuery), filter(isValid), distinctUntilChanged(sameQuery)))`.
+
+### Decision:
+- Implemented in 0.7.0. Results that arrive synchronously no longer emit `[loading, value]`, only `[value]`, which is considered a positive side effect.
+
+## Operators in pipes
+
+In vanilla RxJS an error thrown in an operator ends the stream. To keep a stateful observable alive, 0.4.0 started to run the operators of `pipe`, `pipeValue` and `pipeError` per event: every event went through a fresh copy of them inside a `switchMap`. That isolated failures and cancelled outdated work, but it silently broke every operator that keeps state across events: `distinctUntilChanged`, `scan`, `take` did nothing, `startWith` emitted before every value, and `shareReplay` stopped sharing.
+
+Four strategies were prototyped and run against the same requirements: per event (the 0.4.0 behaviour), one pipeline for the whole stream, a pipeline rebuilt on error, and a pipeline rebuilt on error with a gate. Only the last one met all of them.
+
+Decision: each node gets one long-lived operator pipeline, fed through a Subject.
+- Stateful operators work as in plain RxJS, and the operator decides about concurrency (`switchMap` switches, `mergeMap` runs every value).
+- An error inside the pipeline becomes an error event, and only the pipeline is rebuilt. The Subject does not replay, so the failing event is not fed again; operator state restarts after the error.
+- A result that arrives after a newer loading or error event has passed by is outdated and dropped (the gate), so it cannot override the newer state.
+- `inactive` rebuilds the pipeline, which cancels work in flight and resets operator state.
+- When a fed value produces no output synchronously, loading is emitted: the change was started and has no result yet. That covers asynchronous steps and values dropped by an operator, which cannot be told apart.
+- Lifetime follows the operators. Context can be held in many ways (`shareReplay(1)`, `share` with a reset delay, a custom caching operator), so no operator is special-cased: when the last subscriber leaves, the node stays connected for as long as the operators stay subscribed to the feed, and is released when they let go, also later. A subscriber that comes back gets the latest state: the operator's replay when it is current, otherwise the last event (a loading or error that happened in between). A fixed `refCount` option on derived nodes was rejected for this reason: it would replace the operators' own strategy with one global choice.
+
+Costs:
+- A value dropped inside a pipe leaves the node pending. Validation and deduplication that should start nothing belong on the input.
+- Work started for an outdated value keeps running until the operator itself cancels it (the next value for `switchMap`); only its result is dropped *(reasoned)*.
+- An operator that completes the pipeline (`takeUntil`, `takeUntilDestroyed`, `take`, `first`) completes the node's subscribers and releases its source, as in plain RxJS. The per-event pipes of 0.4.0 to 0.6.0 never completed anything this way, so `stream.pipe(takeUntilDestroyed()).subscribe(...)` without an unsubscribe kept the node subscribed to its source after destroy (a leak, covered by `tests/pipeLifetime.spec.ts`).
+- While the operators keep the node connected without subscribers, its events are still processed and recorded, so a loader can run with nobody looking; that is what holding context means.
+- The implementation keeps mutable bookkeeping per node (the Subject, the gate, the count of operators holding the feed, the last event) inside the operator, like the combine and factory code.
+
+## Roots do not complete
+
+A root lives as long as the application. It is not ended when its input completes: it can be deactivated (`active: false`) to flush its data, and it stays ready to wake up and do its job again, which is also what lets `reload()` run after the input has completed. Only leaves that live in disposable components and services end, for example with `takeUntilDestroyed()` in their pipe, which completes their subscribers and releases the sources.
+
+Consequences:
+- Operators that act on completion do not act when applied directly to the live stream: there `reduce`, `last`, `toArray`, `count` never emit, `bufferCount` does not flush its last partial buffer, and `debounceTime` emits a pending value when its timer fires, not on completion. Inside a higher-order operator they work as usual, because the inner stream completes: `switchMap((id) => api.page(id).pipe(toArray()))` or `mergeMap((items) => from(items).pipe(reduce(...)))` (both directions in `tests/vanillaParity.spec.ts`). On the live stream itself, end the leaf first (`take`, `takeUntil`) when a finite result is needed.
+- A timer applied to the live stream (`withLatestFrom(interval(...))`) runs for as long as the node is subscribed or kept alive by its operators; bound it, or end the leaf with the component. A timer inside a higher-order operator ends with its inner stream as usual.
+
+### Decision:
+- Expected behaviour; roots are deactivated, leaves are ended.
+
 # To Be Determined
+
+## Stale mix after reloading a combination of synchronous sources
+
+`reload()` on a combined node reloads its sources one after another. A source that settles synchronously answers before the next one is reloaded, so `value$` briefly gets a mix of new and old values (e.g. new `a` + old `b`). Async sources are not affected: all of them are pending before any answers.
+
+Accepted for now: in practice there is no reason to reload a synchronous data source. Possible fix if needed: `pipe(debounceTime(0))` on the combined stream, which collapses the synchronous burst into its final state. Its cost: every combined emission becomes asynchronous, one macrotask per combined layer.
 
 ## Deprecate value$ output stream
 Pros:
 - Since `subscribe` was added directly on the `statefulObservable` instance plus `InteropObservable` were implemented, there is no reason to subscribe onto `value$` to receive data.
 
 Cons:
-- some functions of RxJs (firstValueFrom) require exact Observable as parameter
+- some functions of RxJS (firstValueFrom) require exact Observable as parameter
 
 ## More shorthands
 

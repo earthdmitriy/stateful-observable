@@ -236,12 +236,10 @@ describe("chaining / fillStatefulObservable", () => {
         input: of("something"),
       }).pipeValue(switchMap(() => throwError(() => "err3")));
 
-      const res = await firstValueFrom(store.raw$.pipe(take(2), toArray()));
+      const res = await firstValueFrom(store.raw$.pipe(take(1), toArray()));
 
-      expect(res).toEqual([
-        { state: loadingSymbol },
-        { state: errorSymbol, error: "err3" },
-      ]);
+      // synchronous failure: the error comes without a loading event
+      expect(res).toEqual([{ state: errorSymbol, error: "err3" }]);
     });
 
     it("pipeValue raw with async error", async () => {
@@ -349,12 +347,8 @@ describe("chaining / fillStatefulObservable", () => {
       store.reload();
       await new Promise((r) => setTimeout(r, 5)); // wait for async operations
 
-      expect(results).toEqual([
-        { state: loadingSymbol },
-        { state: errorSymbol, error: "err8" },
-        { state: loadingSymbol },
-        [1, 2],
-      ]);
+      // synchronous results: no loading events
+      expect(results).toEqual([{ state: errorSymbol, error: "err8" }, [1, 2]]);
     });
   });
 
@@ -422,9 +416,9 @@ describe("chaining / fillStatefulObservable", () => {
 
       const res = await firstValueFrom(store as unknown as Observable<number>);
 
-      // TODO find better way to check it
-      // +({ state: loadingSymbol }) returns NaN
-      expect(res).toEqual(NaN);
+      // the real check is the @ts-expect-error above; at runtime the input is
+      // synchronous, so the first event is the value itself
+      expect(res).toEqual(1);
     });
 
     type AsyncPipeTransform<T> = <T>(

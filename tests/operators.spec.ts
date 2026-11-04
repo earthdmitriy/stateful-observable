@@ -127,7 +127,7 @@ describe("statefulObservable operators", () => {
       expect(arr).toEqual([{ state: errorSymbol, error: "err" }, "ok!"]);
     });
 
-    it("switch on new event", async () => {
+    it("follows the operator's own concurrency: mergeMap runs every value", async () => {
       const raw$ = of(0, 1, 2, 3);
 
       const done: Boolean[] = [];
@@ -135,6 +135,27 @@ describe("statefulObservable operators", () => {
       const piped$ = raw$.pipe(
         pipeValue(
           mergeMap((v) =>
+            of(v).pipe(
+              delay(1),
+              tap(() => (done[v] = true)),
+            ),
+          ),
+        ),
+      );
+
+      const arr = await lastValueFrom(piped$);
+      expect(done).toEqual([true, true, true, true]);
+      expect(arr).toEqual(3);
+    });
+
+    it("follows the operator's own concurrency: switchMap switches to the newest value", async () => {
+      const raw$ = of(0, 1, 2, 3);
+
+      const done: Boolean[] = [];
+
+      const piped$ = raw$.pipe(
+        pipeValue(
+          switchMap((v) =>
             of(v).pipe(
               delay(1),
               tap(() => (done[v] = true)),

@@ -37,8 +37,10 @@ describe("combineStatefulObservables", () => {
     });
 
     it("emits a loading sentinel while any source is loading", async () => {
+      // asynchronous sources: a synchronous one emits its value without loading
       const s1 = statefulObservable({
         input: new BehaviorSubject(1),
+        loader: (x: number) => new BehaviorSubject(x).pipe(delay(1)),
       });
       const s2 = statefulObservable({
         input: new BehaviorSubject(2),

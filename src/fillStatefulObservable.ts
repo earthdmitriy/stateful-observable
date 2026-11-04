@@ -15,6 +15,7 @@ import {
   PipeErrorOperator,
   PipeRawOperator,
   PipeValueOperator,
+  ReloadOptions,
   ResponseWithStatus,
   StatefulObservable,
 } from "./types";
@@ -36,6 +37,7 @@ export const fillStatefulObservable = <Result, Error, Meta = undefined>({
   index: prevIndex,
   reload,
   refCount,
+  trackConsumers,
 }: {
   raw: Observable<ResponseWithStatus<Result, Error>>;
   name: string;
@@ -43,8 +45,17 @@ export const fillStatefulObservable = <Result, Error, Meta = undefined>({
   internalMeta: MetaInfo[];
   index: number;
   log?: LogFn<Result, Error>;
-  reload: () => void;
+  reload: (options?: ReloadOptions) => void;
   refCount: boolean;
+  /**
+   * Called when a consumer subscribes to this node (directly or through a
+   * stream derived from it) and when that subscription ends. Counted after the
+   * shared cache, so it reflects consumers even with `refCount: false`.
+   */
+  trackConsumers?: {
+    readonly onSubscribe: () => void;
+    readonly onEnd: () => void;
+  };
 }): StatefulObservable<Result, Error, Meta> => {
   const index = prevIndex + 1;
 
@@ -62,7 +73,33 @@ export const fillStatefulObservable = <Result, Error, Meta = undefined>({
         }
       });
 
-  const cachedRaw$ = raw.pipe(sideEffect, defaultCache(refCount));
+  const shared$ = raw.pipe(sideEffect, defaultCache(refCount));
+  const cachedRaw$ = trackConsumers
+    ? shared$.pipe(
+        tap({
+          subscribe: trackConsumers.onSubscribe,
+          finalize: trackConsumers.onEnd,
+        }),
+      )
+    : shared$;
+
+  // Checks `where` against this node before delegating. A match reloads the
+  // whole subtree (`where` is dropped); otherwise the search continues with
+  // `where` intact. Children get this checked reload, so pipes and `.with`
+  // nodes are checked too.
+  const checkedReload = (options?: ReloadOptions) => {
+    // a path still to follow is resolved first; `where` applies only after it
+    if (options?.path?.length) {
+      reload(options);
+      return;
+    }
+    const where = options?.where;
+    if (where && where({ name, meta })) {
+      reload(options.onlyFailed ? { onlyFailed: true } : undefined);
+      return;
+    }
+    reload(options);
+  };
 
   const subscribe = makeSubscribe(cachedRaw$);
 
@@ -72,7 +109,7 @@ export const fillStatefulObservable = <Result, Error, Meta = undefined>({
     meta,
     [metaSymbol]: internalMeta,
     index,
-    reload,
+    reload: checkedReload,
 
     value$: cachedRaw$.pipe(filter(isSuccess)),
     error$: cachedRaw$.pipe(
@@ -99,7 +136,7 @@ export const fillStatefulObservable = <Result, Error, Meta = undefined>({
         meta,
         internalMeta,
         index,
-        reload,
+        reload: checkedReload,
         refCount,
       }),
 
@@ -110,7 +147,7 @@ export const fillStatefulObservable = <Result, Error, Meta = undefined>({
         meta,
         internalMeta,
         index,
-        reload,
+        reload: checkedReload,
         refCount,
       }),
 
@@ -121,7 +158,7 @@ export const fillStatefulObservable = <Result, Error, Meta = undefined>({
         meta,
         internalMeta,
         index,
-        reload,
+        reload: checkedReload,
         refCount,
       }),
 
@@ -132,7 +169,7 @@ export const fillStatefulObservable = <Result, Error, Meta = undefined>({
         meta: "meta" in options ? options.meta : meta,
         internalMeta,
         index,
-        reload,
+        reload: checkedReload,
         refCount,
       }),
 

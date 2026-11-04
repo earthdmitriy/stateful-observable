@@ -82,6 +82,98 @@ describe("statefulObservableFactory", () => {
     expect(calls).toBe(2);
   });
 
+  it("reset(false) keeps entries that still have subscribers", async () => {
+    let calls = 0;
+    const factory = statefulObservableFactory<number, number>({
+      loader: (id) => {
+        calls++;
+        return Promise.resolve(id + 100);
+      },
+      cacheKey: (i) => [i],
+    });
+
+    const subscribed = factory.get(1);
+    const idle = factory.get(2);
+
+    const values: number[] = [];
+    const subscription = subscribed.subscribe((v) => values.push(v));
+    await firstValueFrom(idle.value$); // subscribes and unsubscribes again
+    await new Promise((r) => setTimeout(r, 5));
+    expect(values).toEqual([101]);
+
+    factory.reset(false);
+
+    // the subscribed entry survives, the idle one is dropped
+    expect(factory.get(1)).toBe(subscribed);
+    expect(factory.get(2)).not.toBe(idle);
+
+    // the surviving entry still serves its subscriber and is not refetched
+    expect(calls).toBe(2);
+    subscription.unsubscribe();
+  });
+
+  it("reset(false) drops an entry once its last subscriber has left", async () => {
+    const factory = statefulObservableFactory<number, number>({
+      loader: (id) => Promise.resolve(id),
+      cacheKey: (i) => [i],
+    });
+
+    const stream = factory.get(1);
+    const first = stream.subscribe(() => {});
+    const second = stream.subscribe(() => {});
+    await new Promise((r) => setTimeout(r, 5));
+
+    first.unsubscribe();
+    factory.reset(false);
+    expect(factory.get(1)).toBe(stream); // one subscriber is left
+
+    second.unsubscribe();
+    factory.reset(false);
+    expect(factory.get(1)).not.toBe(stream); // none left
+  });
+
+  it("reset(true) completes existing subscribers and empties the cache", async () => {
+    const factory = statefulObservableFactory<number, number>({
+      loader: (id) => Promise.resolve(id * 10),
+      cacheKey: (i) => [i],
+    });
+
+    const stream = factory.get(1);
+    const values: number[] = [];
+    let completed = 0;
+    const subscription = stream.subscribe({
+      next: (v) => values.push(v),
+      complete: () => completed++,
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(values).toEqual([10]);
+    expect(completed).toBe(0);
+
+    factory.reset(true);
+
+    expect(completed).toBe(1);
+    expect(factory.get(1)).not.toBe(stream);
+    subscription.unsubscribe();
+  });
+
+  it("reset(false) does not complete entries that have subscribers", async () => {
+    const factory = statefulObservableFactory<number, number>({
+      loader: (id) => Promise.resolve(id),
+      cacheKey: (i) => [i],
+    });
+
+    const stream = factory.get(1);
+    let completed = 0;
+    const subscription = stream.subscribe({ complete: () => completed++ });
+    await new Promise((r) => setTimeout(r, 5));
+
+    factory.reset(false);
+
+    expect(completed).toBe(0);
+    expect(factory.get(1)).toBe(stream);
+    subscription.unsubscribe();
+  });
+
   it("reload triggers reload on all cached observables", async () => {
     let calls = 0;
     const factory = statefulObservableFactory<number, number>({

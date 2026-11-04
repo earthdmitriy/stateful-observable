@@ -14,4 +14,10 @@ export {
   type ConnectableSource,
   type StatefulConnection,
 } from "./statefulConnection";
-export { ResponseWithStatus, ResponseDto, StatefulObservable } from "./types";
+export {
+  ReloadOptions,
+  ReloadTarget,
+  ResponseWithStatus,
+  ResponseDto,
+  StatefulObservable,
+} from "./types";

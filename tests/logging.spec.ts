@@ -213,12 +213,8 @@ describe("custom log", () => {
 
     stream.raw$.subscribe();
 
-    expect(events).toEqual([
-      { pending: true },
-      { input: 1 },
-      { value: 10 },
-      { value: 10 },
-    ]);
+    // synchronous loader: no pending event
+    expect(events).toEqual([{ input: 1 }, { value: 10 }, { value: 10 }]);
   });
 
   it("logs error in serializable shape", () => {
@@ -236,12 +232,8 @@ describe("custom log", () => {
     stream.error$.subscribe();
     stream.raw$.subscribe();
 
-    expect(events).toEqual([
-      { pending: true },
-      { input: 1 },
-      { error: "err" },
-      { error: "err" },
-    ]);
+    // synchronous failure: no pending event
+    expect(events).toEqual([{ input: 1 }, { error: "err" }, { error: "err" }]);
   });
 
   it("logs inactive in serializable shape", () => {

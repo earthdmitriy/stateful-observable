@@ -1,4 +1,4 @@
-import { combineLatest, map } from "rxjs";
+import { combineLatest, finalize, map, tap } from "rxjs";
 import { fillStatefulObservable } from "./fillStatefulObservable";
 import {
   errorSymbol,
@@ -11,9 +11,11 @@ import {
 } from "./response-container";
 import {
   MetaInfo,
+  ReloadOptions,
   ResponseError,
   ResponseInactive,
   ResponseLoading,
+  ResponseWithStatus,
   StatefulObservable,
 } from "./types";
 
@@ -51,6 +53,22 @@ type UnwrapStatefulObservablesError<T extends unknown[]> = T extends []
  *
  * The combined stream propagates `reload()` calls to all source streams.
  *
+ * `reload({ onlyFailed: true })` reloads only the sources that are currently
+ * failed (their latest raw event is an error), so healthy sources are not
+ * refetched:
+ * - a failed source is reloaded with the same options, so a source that is
+ *   itself a combined node recurses into ITS failed sources only; a plain
+ *   root source ignores `onlyFailed` and simply reloads;
+ * - loading, inactive and successful sources are skipped, so with no failed
+ *   source nothing is refetched;
+ * - the latest source events are tracked only while the combined stream has
+ *   subscribers (nothing keeps sources alive otherwise). When there is no
+ *   such information (never subscribed, refCount dropped to zero, or some
+ *   source has not emitted yet) it falls back to reloading ALL sources.
+ *
+ * `reload({ where })` reloads only the matching part of the graph; see
+ * `ReloadOptions`.
+ *
  * @template T - Tuple or array of `StatefulObservable` sources. The element
  *   types are unwrapped and passed into `mapCombinedValue`.
  * @template Result - The result type produced by `mapCombinedValue`.
@@ -75,10 +93,47 @@ export const combineStatefulObservables = <
   args: [...T],
   mapCombinedValue: (data: UnwrapStatefulObservables<T>) => Result,
 ): StatefulObservable<Result, UnwrapStatefulObservablesError<T>> => {
+  // Latest events of the sources, known only while the combined stream is
+  // subscribed. Isolated, write-only-from-the-stream bookkeeping used by
+  // `reload({ onlyFailed: true })`; `undefined` means "no information".
+  let latestEvents: readonly ResponseWithStatus<unknown, unknown>[] | undefined;
+
+  // `where` still set here means this node did not match (checked by its
+  // fill); each source checks it again on the way down.
+  const reload = (options?: ReloadOptions) => {
+    const path = options?.path;
+    if (path?.length) {
+      // follow one hop; the rest of the path (if any) goes to that source
+      const [head, ...tail] = path;
+      const target =
+        Number.isInteger(head) && head >= 0 && head < args.length
+          ? args[head]
+          : undefined;
+      target?.reload({ ...options, path: tail });
+      return;
+    }
+    const events = latestEvents;
+    if (!options?.onlyFailed || !events) {
+      // no state information: reload every source, keeping only `where`
+      const rest = options?.where ? { where: options.where } : undefined;
+      args.forEach((stream) => stream.reload(rest));
+      return;
+    }
+    args.forEach((stream, i) => {
+      if (isError(events[i])) stream.reload(options);
+    });
+  };
+
   const meta = args.flatMap((a) => a[metaSymbol] as MetaInfo[]);
 
   return fillStatefulObservable({
     raw: combineLatest(args.map((s) => s.raw$)).pipe(
+      tap((events) => {
+        latestEvents = events;
+      }),
+      finalize(() => {
+        latestEvents = undefined;
+      }),
       map((events) => {
         if (events.some((x) => isInactive(x)))
           return { state: inactiveSymbol } as ResponseInactive;
@@ -95,7 +150,7 @@ export const combineStatefulObservables = <
     name: `[${args.map(({ name }) => name).join(", ")}]`,
     internalMeta: meta,
     index: -1, // will be incremented to 0 in fillStatefulObservable
-    reload: () => args.forEach((stream) => stream.reload()),
+    reload,
     // any refCount: true in sources => projection also refCount: true
     refCount: meta.some((m) => m.refCount),
   });

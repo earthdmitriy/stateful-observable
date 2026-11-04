@@ -63,9 +63,10 @@ describe("statefulObservable", () => {
         input: new BehaviorSubject(1),
       });
 
-      const res = await firstValueFrom(store.raw$.pipe(take(2), toArray()));
+      const res = await firstValueFrom(store.raw$.pipe(take(1), toArray()));
 
-      expect(res).toEqual([{ state: loadingSymbol }, 1]);
+      // synchronous input: the value comes without a loading event
+      expect(res).toEqual([1]);
     });
 
     it("dont keep state without subscribers", async () => {
@@ -219,6 +220,73 @@ describe("statefulObservable", () => {
       subscribeSub.unsubscribe();
     });
 
+    describe("result cache", () => {
+      const setup = () => {
+        const active = new BehaviorSubject(true);
+        const user = { name: "alice" };
+        const calls: string[] = [];
+        const store = statefulObservable({
+          input: new BehaviorSubject(1),
+          loader: (id: number) => {
+            calls.push(`${user.name}:${id}`);
+            return of(`${user.name}:${id}`);
+          },
+          cacheKey: (id: number) => [id],
+          active,
+        });
+        return { active, user, calls, store };
+      };
+      const tick = () => new Promise((r) => setTimeout(r, 5));
+
+      it("does not serve a previous user's cached result after relogin", async () => {
+        const { active, user, calls, store } = setup();
+        const values: string[] = [];
+        const sub = store.subscribe((v) => values.push(v));
+        await tick();
+
+        active.next(false);
+        await tick();
+        user.name = "bob";
+        active.next(true);
+        await tick();
+
+        expect(values).toEqual(["alice:1", "bob:1"]);
+        expect(calls).toEqual(["alice:1", "bob:1"]);
+        sub.unsubscribe();
+      });
+
+      it("does not request anything while going inactive", async () => {
+        const { active, calls, store } = setup();
+        const sub = store.subscribe(() => {});
+        await tick();
+        expect(calls).toEqual(["alice:1"]);
+
+        active.next(false);
+        await tick();
+
+        expect(calls).toEqual(["alice:1"]);
+        sub.unsubscribe();
+      });
+
+      it("clears the cache of derived streams too", async () => {
+        const { active, user, calls, store } = setup();
+        const derived = store.pipeValue(map((v: string) => v.toUpperCase()));
+        const values: string[] = [];
+        const sub = derived.subscribe((v) => values.push(v));
+        await tick();
+
+        active.next(false);
+        await tick();
+        user.name = "bob";
+        active.next(true);
+        await tick();
+
+        expect(values).toEqual(["ALICE:1", "BOB:1"]);
+        expect(calls).toEqual(["alice:1", "bob:1"]);
+        sub.unsubscribe();
+      });
+    });
+
     it("cancels in-flight pipeValue internal subscription on inactive", async () => {
       const active = new BehaviorSubject(true);
       let fetchSubscribed = 0;
@@ -354,10 +422,9 @@ describe("statefulObservable", () => {
       store.reload();
       await new Promise((r) => setTimeout(r, 5)); // wait for async operations
 
+      // synchronous loader: no loading events
       expect(results).toEqual([
-        { state: loadingSymbol },
         [1, 1],
-        { state: loadingSymbol },
         [1, 2],
       ]);
     });
@@ -389,12 +456,8 @@ describe("statefulObservable", () => {
       input.next(1);
       await new Promise((r) => setTimeout(r, 5)); // wait for async operations
 
-      expect(results).toEqual([
-        { state: loadingSymbol },
-        { state: errorSymbol, error: "err7" },
-        { state: loadingSymbol },
-        [1, 2],
-      ]);
+      // synchronous loader: no loading events
+      expect(results).toEqual([{ state: errorSymbol, error: "err7" }, [1, 2]]);
     });
 
     it("reload triggers new request after error - raw", async () => {
@@ -421,12 +484,8 @@ describe("statefulObservable", () => {
       store.reload();
       await new Promise((r) => setTimeout(r, 5)); // wait for async operations
 
-      expect(results).toEqual([
-        { state: loadingSymbol },
-        { state: errorSymbol, error: "err8" },
-        { state: loadingSymbol },
-        [1, 2],
-      ]);
+      // synchronous loader: no loading events
+      expect(results).toEqual([{ state: errorSymbol, error: "err8" }, [1, 2]]);
     });
   });
 

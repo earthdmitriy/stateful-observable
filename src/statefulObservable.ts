@@ -1,20 +1,20 @@
 import {
   BehaviorSubject,
   combineLatest,
+  defer,
   from,
   iif,
   isObservable,
   map,
-  merge,
   Observable,
   ObservableInput,
   of,
   switchMap,
   tap,
 } from "rxjs";
-import { createCache } from "./cache";
+import { createCache, toCacheKey } from "./cache";
 import { fillStatefulObservable } from "./fillStatefulObservable";
-import { catchResponseError, mapToLoading } from "./operators";
+import { catchResponseError, loadingUnlessSync } from "./operators";
 import { inactiveSymbol, serializeResponse } from "./response-container";
 import {
   ParamsWithInput,
@@ -58,7 +58,7 @@ const expandInput = <Input, Response, Meta>(
  *   the implementation will use a single trigger so the loader still runs when subscribed or reloaded.
  * @param {(input: Input) => ObservableInput<Response>} [options.loader] - Optional function that maps an input to an observable (eg. HTTP request). If omitted the input value itself is used as the response.
  * @param {TmapOperator} [options.mapOperator=switchMap] - Operator used to map each input to a response observable. Defaults to `switchMap`.
- * @param {(i: Input) => any[]} [options.cacheKey] - Optional cache key generator. Return an array of values which will be joined to form the cache key.
+ * @param {(i: Input) => any[]} [options.cacheKey] - Optional cache key generator. Return an array of JSON-serializable values; it is encoded as JSON to form the cache key. An empty array skips caching.
  *   When the returned array is falsy or empty the value is not cached. When a truthy key is produced successful responses are cached and reused for identical keys.
  * @param {number} [options.cacheSize=42] - Maximum number of entries retained in the internal LRU-like cache.
  * @param {string} [options.name] - Optional name for debugging/logging purposes.
@@ -111,7 +111,7 @@ export const statefulObservable = <Input, Response = Input, Meta = undefined>(
     active,
     loader,
     mapOperator = switchMap,
-    cacheKey = () => [] as never[], // falsy cache key will skip caching
+    cacheKey = () => [] as never[], // an empty key skips caching
     cacheSize = 42,
     meta,
     name = "unnamed",
@@ -121,37 +121,39 @@ export const statefulObservable = <Input, Response = Input, Meta = undefined>(
 
   const source$ = input ?? of(true as Input);
   const cache$ = new BehaviorSubject(createCache<Response>(cacheSize));
-
-  const loading$ = combineLatest([source$, cache$]).pipe(
-    mapToLoading(),
-    catchResponseError(),
-  ); // source can throw errors too
+  const resetCache = () => cache$.next(createCache<Response>(cacheSize));
 
   const makeObservableInput = (input: Input) =>
     loader ? loader(input) : of(input as unknown as Response);
 
   const valueOrError$ = combineLatest([source$, cache$]).pipe(
-    map(([input, cache]) => ({
-      input,
-      cache,
-      key: cacheKey(input).join("|"),
-    })),
-    mapOperator(({ input, cache, key }) => {
+    mapOperator(([input, cache]) => {
       if (log) log({ input }, name, 0);
-      if (key) {
-        // skip if no cache key
-        const cached = cache.get(key);
-        if (cached) return of(cached);
-      }
+      // `defer` turns a synchronous throw (in `cacheKey`, in key encoding or
+      // in the loader) into an error event for this input only, so the stream
+      // keeps handling later inputs. Loading is emitted only when the result
+      // does not arrive synchronously (input-only nodes, sync loaders, cache
+      // hits): a change that finishes at once was never pending.
+      return loadingUnlessSync(
+        defer(() => {
+          const key = toCacheKey(cacheKey(input));
+          if (key !== null) {
+            // a lookup, not a truthiness check: falsy results are cached too
+            const cached = cache.lookup(key);
+            if (cached.hit) return of(cached.value);
+          }
 
-      return from(makeObservableInput(input)).pipe(
-        tap({
-          next: (result) => cache.set(key, result),
-        }),
-        catchResponseError(),
+          return from(makeObservableInput(input)).pipe(
+            tap({
+              next: (result) => {
+                if (key !== null) cache.set(key, result);
+              },
+            }),
+          );
+        }).pipe(catchResponseError()),
       );
     }),
-    catchResponseError(),
+    catchResponseError(), // the source can throw errors too
     tap((raw) => {
       if (log) log(serializeResponse(raw), name, 0);
     }),
@@ -162,12 +164,19 @@ export const statefulObservable = <Input, Response = Input, Meta = undefined>(
         switchMap((a) =>
           iif(
             () => a,
-            merge(loading$, valueOrError$),
-            of({ state: inactiveSymbol } as ResponseInactive),
+            valueOrError$,
+            // Drop cached results when the stream goes inactive (logout): they
+            // may belong to the previous user. Done here, after switchMap has
+            // unsubscribed the active branch, so replacing the cache does not
+            // trigger a reload.
+            defer(() => {
+              resetCache();
+              return of({ state: inactiveSymbol } as ResponseInactive);
+            }),
           ),
         ),
       )
-    : merge(loading$, valueOrError$);
+    : valueOrError$;
   const internalMeta = [{ errorSubscriptions: 0, refCount }];
 
   return fillStatefulObservable<Response, unknown, Meta>({
@@ -177,7 +186,12 @@ export const statefulObservable = <Input, Response = Input, Meta = undefined>(
     internalMeta,
     log,
     index: -1, // will be incremented to 0 in fillStatefulObservable
-    reload: () => cache$.next(createCache<Response>(cacheSize)),
+    // `where` still set here means nothing on the way to this root matched, and
+    // a path left over goes deeper than the graph; `onlyFailed` is ignored by a
+    // root (its combined parent already checked)
+    reload: (options) => {
+      if (!options?.where && !options?.path?.length) resetCache();
+    },
     refCount,
   });
 };
