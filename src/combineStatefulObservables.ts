@@ -1,20 +1,18 @@
-import { combineLatest, finalize, map, tap } from "rxjs";
+import { combineLatest, finalize, map } from "rxjs";
 import { fillStatefulObservable } from "./fillStatefulObservable";
 import {
-  errorSymbol,
-  inactiveSymbol,
+  errorEvent,
+  inactiveEvent,
   isError,
   isInactive,
   isLoading,
-  loadingSymbol,
+  loadingEvent,
   metaSymbol,
 } from "./response-container";
 import {
   MetaInfo,
   ReloadOptions,
   ResponseError,
-  ResponseInactive,
-  ResponseLoading,
   ResponseWithStatus,
   StatefulObservable,
 } from "./types";
@@ -128,22 +126,17 @@ export const combineStatefulObservables = <
 
   return fillStatefulObservable({
     raw: combineLatest(args.map((s) => s.raw$)).pipe(
-      tap((events) => {
-        latestEvents = events;
-      }),
       finalize(() => {
         latestEvents = undefined;
       }),
       map((events) => {
-        if (events.some((x) => isInactive(x)))
-          return { state: inactiveSymbol } as ResponseInactive;
-        if (events.some((x) => isLoading(x)))
-          return { state: loadingSymbol } as ResponseLoading;
-        if (events.some((x) => isError(x)))
-          return {
-            state: errorSymbol,
-            error: events.map((x) => (isError(x) ? x.error : false)),
-          } as ResponseError<UnwrapStatefulObservablesError<T>>;
+        latestEvents = events;
+        if (events.some(isInactive)) return inactiveEvent();
+        if (events.some(isLoading)) return loadingEvent();
+        if (events.some(isError))
+          return errorEvent(
+            events.map((x) => (isError(x) ? x.error : false)),
+          ) as ResponseError<UnwrapStatefulObservablesError<T>>;
         return mapCombinedValue(events as UnwrapStatefulObservables<T>);
       }),
     ),

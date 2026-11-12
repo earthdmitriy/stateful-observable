@@ -443,20 +443,130 @@ Consequences:
 ### Decision:
 - Expected behaviour; roots are deactivated, leaves are ended.
 
+## Priority of states in a combination
+
+`combineStatefulObservables` reduces the latest events of its sources to one event: inactive if any source is inactive, else pending if any is pending, else error if any failed (a tuple with one entry per source, `false` for a source that did not fail), else the combined value. A combination means "needs all of these", so once one source has failed the value cannot be produced, yet while another source is still pending the combination stays pending: the error is shown only when the slowest source settles. If the bucket fails after one second and the catalog takes five, the UI shows a spinner for five seconds and then the error.
+
+Considered:
+- **Error before pending (fail fast).** The error is shown as soon as it arrives. But the error event becomes partial: `[eBucket, false]` first, then `[eBucket, eCatalog]` when the catalog fails too, and `false` no longer means "did not fail", it can also mean "still running". `error$` emits several times for one failure, and when one input feeds several sources, or a reload goes through them one by one, an outdated error from the previous input is emitted for a moment before the next source turns pending.
+- **Newest wins between error and pending.** The error is shown if it arrived after every pending load that is still running. This removes the outdated error, but the error event is still partial and still extended later.
+- **Pending and error at once.** A composite event (pending with known errors). It changes `ResponseWithStatus`, serialization and every operator, and pushes the decision to each consumer.
+- **A configurable rule per combination.** The point of the combination is one rule applied the same way at every node.
+
+Why pending before error:
+- **An error event describes the full available state.** It is emitted only when every source has settled, so the consumer renders error information assuming it is complete: every failed source is in the tuple, and every `false` is a source that succeeded. A per-source error view, a message such as "catalog and bucket are unavailable" or a decision based on which sources failed can be made once.
+- **No duplicate or partial errors.** One error event per settled state of the combination, never a partial one that is extended later, so an error view does not change under the user, and logging or reporting at a combined node sees each failure once.
+- **Retry covers everything that failed.** `reload({ onlyFailed: true })` from an error view reaches every failed source; with a partial error a retry pressed early misses a source that fails afterwards.
+- **No outdated errors.** A source turning pending always wins, so an error from a previous input or from before a reload is never emitted again.
+- **The previous error stays visible during a retry.** `error$` skips pending events, so after a reload the error view keeps the last complete error until a value or a new complete error arrives.
+
+Costs:
+- An error is delayed by the slowest pending source of the same combination, and `pending$` is true while the combination can no longer succeed.
+- Mitigations: put a `timeout` in loaders that can be slow, so the delay is bounded; report errors at the source (`pipeError` at the root runs as soon as that source fails, independently of any combination); keep data that is merely nice to have in its own leaf instead of in a combination that needs it.
+
+### Decision:
+- Keep inactive, then pending, then error, then value.
+
+## Keep the `value$` output stream
+
+Deprecating `value$` was considered: since `subscribe` was added on the `statefulObservable` instance and `InteropObservable` was implemented, data can be received without it.
+
+Why it stays:
+- Some RxJS functions and operators need a plain `Observable` (`firstValueFrom`, `combineLatest([...])` with plain streams). `value$` is one, and it carries values only, so a failed load does not reject or end it.
+- In a template, `stream.value$ | async` delivers the same values as `stream | async` without sending each error event to Angular's `ErrorHandler`, for projects that handle errors in the UI or at the source with `pipeError`.
+- `toSignal(stream.value$)` gives a signal that never throws on read, next to `toSignal(stream.pending$)` and `toSignal(stream.error$)`.
+
+### Decision:
+- Keep `value$`; it is not deprecated.
+
+## Keep settled values in factory entries
+
+A factory entry is a `statefulObservable` with one fixed input. Until 0.8.0 its `refCount` decided two things at once when the last consumer left:
+
+| | a load still in flight | a load that completed |
+| --- | --- | --- |
+| `refCount: true` | cancelled | dropped: a consumer that comes back loads again |
+| `refCount: false` | runs to the end | kept |
+
+The combination most reads want, cancel what nobody waits for and keep what already arrived (as TanStack Query, SWR or Apollo do), was not available. A spec that asks for both "a superseded read is cancelled, not only ignored" and "a key that was loaded is served from cache" cannot be met with either value. Both come from one call site (`customer.get(id)`, or a `project` over the selected id) at two moments, before and after the read settles, so two factories with different `refCount` do not help. The batch factory makes it worse: with `refCount: false` an id that scrolled away is never taken out of the unsent batch; with `refCount: true` a row that scrolls back joins a new batch.
+
+It was also inconsistent: a plain `statefulObservable` with `cacheKey` and `refCount: true` already cancels a load in flight and keeps completed results across unsubscribing. A factory entry is the same node with an implicit key, but without a result cache.
+
+Considered:
+- **A new option (`keepSettled`) next to `refCount`.** Keeps the old behaviour by default, but the factory exists to cache entities, and the two options would overlap (`refCount: false` keeps the value too). Rejected: 0.8.0 is not released, so this is the cheapest moment to change the default.
+- **The node's own result cache (`cacheKey` on each entry).** Tried: it gives the behaviour, but an entry without subscribers then watches `active` to drop the cache at logout, and an entry that leaves the factory keeps that subscription until the next logout (a leak per evicted entry).
+- **Keep a value as soon as it arrives, not when the load completes.** A streaming loader (a socket, polling) would then be frozen at its last value for a consumer that comes back, and never reconnected.
+- **Make `refCount: false` cancel loads in flight.** That breaks what it is for: prefetching, live streams, and work that must finish.
+
+### Decision:
+- In 0.8.0 `refCount` only decides whether an entry stays connected to its loader without consumers. Every entry keeps the value of its last load that **completed** with a value, and a consumer that comes back gets it synchronously, with no loading event and no request. With `refCount: true` (the default) a load still in flight is cancelled when the last consumer leaves.
+- Not kept: errors (a consumer that comes back retries), and loads that did not complete (a stream, a cut-off request), which start again.
+- Dropped by: a `reload()` that reaches the entry (as for a root: not by a `where` or `path` that matches nothing), `factory.reload()`, `active: false`, and the entry leaving the cache (`cacheSize`, `reset`). An entry held elsewhere after it left the cache loads again instead of serving its old value.
+- Logout: one subscription to `active` per factory, held only while some entry may keep a value; on the first `false` it drops every kept value and ends. A `reset` that empties the factory ends it too.
+- The entry releases its loader **one microtask** after its last consumer leaves. A consumer that wants one value (`firstValueFrom`, `take(1)`) unsubscribes inside `next`, before an HTTP request or a promise completes in the same callback; without the delay such a load would never count as completed. A load that a `reload()` or a logout replaced in the meantime cannot store its result (a generation counter).
+
+Costs:
+- The default changed: in 0.7.x a key nobody showed was loaded again on the next visit. Data that must be fresh on every visit needs `reload()` when it is shown.
+- A kept value is served until it is reloaded, evicted, reset or the user logs out; there is no expiry, as for `cacheKey`.
+- A load in flight is cancelled one microtask after its last consumer leaves, not synchronously.
+- An entry holds one more value per key while nobody shows it, bounded by `cacheSize` like the entries themselves.
+
 # To Be Determined
 
 ## Stale mix after reloading a combination of synchronous sources
 
 `reload()` on a combined node reloads its sources one after another. A source that settles synchronously answers before the next one is reloaded, so `value$` briefly gets a mix of new and old values (e.g. new `a` + old `b`). Async sources are not affected: all of them are pending before any answers.
 
+This is specific to `reload()`, which reloads the sources one by one. When one input feeds several synchronous branches, the combination also emits an intermediate value (`statefulObservable(id$)` with two `pipeValue(map(...))` branches emitted `1100, 2100, 2200` for an input change from 1 to 2), but that is the contract of `combineLatest`, which emits on every source change, and plain RxJS does the same (`tests/vanillaParity.spec.ts`). It is not treated as a defect. The Angular signals RFC ([Sub-RFC 1](https://github.com/angular/angular/discussions/49684), section "RxJS is not glitch-free", read November 2026) calls this a glitch, "a calculation or reaction observes an intermediate, inconsistent state", shows it with a synchronous `combineLatest` example, and uses it as one of the reasons for pull-based signals; it also says that in asynchronous RxJS code glitches are not typically an issue. That is a requirement for template rendering, not a defect of `combineLatest`; for a push-based combination it is the expected behaviour. With asynchronous sources the library emits fewer intermediate values than plain RxJS, since a pending source holds the combination.
+
 Accepted for now: in practice there is no reason to reload a synchronous data source. Possible fix if needed: `pipe(debounceTime(0))` on the combined stream, which collapses the synchronous burst into its final state. Its cost: every combined emission becomes asynchronous, one macrotask per combined layer.
 
-## Deprecate value$ output stream
-Pros:
-- Since `subscribe` was added directly on the `statefulObservable` instance plus `InteropObservable` were implemented, there is no reason to subscribe onto `value$` to receive data.
+## A combination loads its other sources while one source is inactive
 
-Cons:
-- some functions of RxJS (firstValueFrom) require exact Observable as parameter
+`combineStatefulObservables` subscribes the `raw$` of every source at once (`combineLatest(args.map((s) => s.raw$))`) and checks for inactive only on the events. `active` gates only the root it is passed to, so when one source is inactive the combination reports inactive, but every other root without that `active` is still subscribed and loads.
+
+```typescript
+const active$ = new BehaviorSubject(false);
+let catalogCalls = 0;
+const bucket = statefulObservable({ loader: () => of('bucket'), active: active$ });
+const catalog = statefulObservable({
+  loader: () => { catalogCalls++; return of('catalog'); },
+});
+combineStatefulObservables([bucket, catalog], ([b, c]) => b + c).raw$.subscribe();
+// catalogCalls === 1, the combination emitted one inactive event
+```
+
+Display is not affected: the consumer sees inactive and wipes its content. The cost is a request nothing can show (seen in rx-evo, contester dashboard: logged out, a widget combining the user-bound bucket with the public catalog requests the catalog once, and the template has to keep the widget unrendered). Later steps are fine: the catalog is cached, and nothing is requested again after logout and login.
+
+Considered:
+- **Subscribe the first source, then the rest.** Depends on argument order: `[catalog, bucket]` would still load the catalog first.
+- **Gated/ungated split in the combination.** Mark roots that have `active` (`gated: boolean` in `MetaInfo`, inherited by derived nodes through the flattened meta). Subscribe the gated sources first and the ungated ones only while no gated source reports inactive (`connect`, `distinctUntilChanged` on "all gated sources active", `switchMap` to `combineLatest(ungated)`, the ungated sources reported as inactive meanwhile). Combinations with only gated or only ungated sources keep the current code path. It is not perfect: two gated sources with different `active` streams still subscribe together (ordering them against each other brings back the dependence on argument order), and it adds a `MetaInfo` field and a second code path for what the workaround below already solves.
+
+### Decision:
+- Keep as is, for now.
+- If it is a problem, pass the same `active` to the other root as well, so it is gated by the same condition:
+  ```typescript
+  const catalog = statefulObservable({
+    loader: () => of('catalog'),
+    active: active$,
+  });
+  ```
+- To also prevent a re-fetch (the root is not wiped and does not reload when `active` goes `false` and back), gate it only on the first activation: `active: active$.pipe(filter(Boolean), startWith(false))`. `startWith(false)` keeps the root inactive until the first `true`; `filter(Boolean)` never lets a later `false` through.
+
+## Two more sentinels: `active` and `firstPending`
+
+Two situations look the same to a consumer today:
+- A root is running but its input has not emitted yet (a form's `valueChanges`, a `Subject`). After a re-activation the last event the consumer saw is still `inactive`, so the stream looks switched off.
+- `loading` is one event for a first load and for a reload, so a UI cannot choose between a skeleton (no data yet) and a spinner overlay (previous data is shown).
+
+Proposal:
+- `active`: the stream is running, but nothing has been received on its input yet. Nothing is in flight. Emitted only if the input did not answer synchronously, like loading since 0.7.0.
+- `firstPending`: emitted instead of `pending` at the first run and after a re-activation, when there is no previous result to keep showing. An explicit signal for the UI: skeleton instead of spinner overlay.
+
+Open points, all in [the details](./sentinels-active-first-pending.md): `isLoading` stays true for `firstPending` (it is a refinement of pending), `isSuccess` must exclude both (it is a negative check, so an unlisted sentinel would be a value), the priority in a combination (`inactive`, `firstPending`, `pending`, `active`, `error`, value), serialization, names, and the cost for mixed library versions. The typeguard matrix is in the details.
+
+### Decision:
+- TBD
 
 ## More shorthands
 

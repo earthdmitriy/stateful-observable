@@ -1,27 +1,16 @@
 import {
   BehaviorSubject,
+  catchError,
   concatMap,
   from,
-  map,
   Observable,
   ObservableInput,
   of,
-  startWith,
   switchMap,
 } from "rxjs";
 import { fillStatefulObservable } from "./fillStatefulObservable";
-import { catchResponseError } from "./operators";
-import {
-  errorSymbol,
-  inactiveSymbol,
-  isError,
-  loadingSymbol,
-} from "./response-container";
-import {
-  ResponseLoading,
-  ResponseWithStatus,
-  StatefulObservable,
-} from "./types";
+import { errorEvent, inactiveEvent, loadingEvent } from "./response-container";
+import { ResponseWithStatus, StatefulObservable } from "./types";
 
 export type ConnectableSource<T, E = unknown> =
   StatefulObservable<T, E> | ObservableInput<T>;
@@ -67,28 +56,15 @@ export const statefulConnection = <T, E = unknown, Meta = undefined>(options?: {
   const raw = source$.pipe(
     switchMap((source): Observable<ResponseWithStatus<T, E>> => {
       if (!source) {
-        return of({
-          state: inactiveSymbol,
-        } as const);
+        return of(inactiveEvent());
       }
 
       if (isStatefulObservableFn(source)) {
         return source.raw$;
       } else {
         return from(source).pipe(
-          concatMap((event) =>
-            of(event).pipe(
-              startWith({ state: loadingSymbol } as ResponseLoading),
-            ),
-          ),
-          catchResponseError(),
-          map((event): ResponseWithStatus<T, E> => {
-            if (isError(event)) {
-              return { state: errorSymbol, error: event.error as E };
-            }
-
-            return event;
-          }),
+          concatMap((event) => [loadingEvent(), event]),
+          catchError((error: E) => of(errorEvent(error))),
         );
       }
     }),

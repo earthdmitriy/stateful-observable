@@ -13,6 +13,7 @@ export type RollingCache<TValue> = {
 export type CreateCache<TValue> = (
   size: number,
   canEvict?: (value: TValue) => boolean,
+  onRemove?: (value: TValue) => void,
 ) => RollingCache<TValue>;
 
 // BigInt is not JSON-serializable; tag it so that 1n and "1" stay different keys
@@ -32,10 +33,14 @@ export const encodeCacheKey = (parts: readonly unknown[]): string =>
 export const toCacheKey = (parts: readonly unknown[]): string | null =>
   parts.length === 0 ? null : encodeCacheKey(parts);
 
-// rolling cache using Map insertion order: least recently used first
+// rolling cache using Map insertion order: least recently used first.
+// `onRemove` is called for every value that leaves the cache (eviction,
+// `reset`, or replacement by a different value under the same key), so the
+// owner can release what the value holds.
 export const createCache = <TValue>(
   size: number,
   canEvict: (value: TValue) => boolean = () => true,
+  onRemove: (value: TValue) => void = () => {},
 ): RollingCache<TValue> => {
   const capacity = Math.max(0, Math.floor(size));
   // values are boxed so that a stored `undefined` is not mistaken for a miss
@@ -44,8 +49,10 @@ export const createCache = <TValue>(
   const set = (key: string, value: TValue) => {
     if (capacity === 0) return;
     // If key exists, remove it so re-inserting moves it to the newest position
-    if (map.has(key)) map.delete(key);
+    const previous = map.get(key);
+    if (previous) map.delete(key);
     map.set(key, { value });
+    if (previous && previous.value !== value) onRemove(previous.value);
 
     // Evict the oldest evictable entries until within capacity. The entry just
     // set is never evicted; when nothing else may go, the cache grows past its
@@ -57,6 +64,7 @@ export const createCache = <TValue>(
       );
       if (!victim) break;
       map.delete(victim[0]);
+      onRemove(victim[1].value);
     }
   };
 
@@ -75,15 +83,12 @@ export const createCache = <TValue>(
   };
 
   const reset = (filter?: (value: TValue) => boolean) => {
-    if (!filter) {
-      map.clear();
-      return;
-    }
-    for (const [key, entry] of map.entries()) {
-      if (filter(entry.value)) {
-        map.delete(key);
-      }
-    }
+    // collect first, so `onRemove` sees the cache already without them
+    const removed = Array.from(map.entries()).filter(
+      ([, entry]) => !filter || filter(entry.value),
+    );
+    removed.forEach(([key]) => map.delete(key));
+    removed.forEach(([, entry]) => onRemove(entry.value));
   };
 
   const getAll = (): TValue[] => {

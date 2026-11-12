@@ -1,22 +1,27 @@
 import {
   MonoTypeOperatorFunction,
   Observable,
+  Observer,
   OperatorFunction,
   Subject,
   Subscriber,
   Subscription,
   catchError,
+  filter,
+  finalize,
+  identity,
   of,
   shareReplay,
   startWith,
+  take,
 } from "rxjs";
 import {
-  errorSymbol,
+  errorEvent,
   isError,
   isInactive,
   isLoading,
   isSuccess,
-  loadingSymbol,
+  loadingEvent,
 } from "./response-container";
 import {
   PipeErrorOperator,
@@ -24,8 +29,29 @@ import {
   PipeValueOperator,
   ResponseError,
   ResponseLoading,
-  ResponseWithStatus,
 } from "./types";
+
+/** An observer that passes `error` and `complete` on to `subscriber`. */
+export const forward = <T, R>(
+  subscriber: Subscriber<R>,
+  next: (value: T) => void,
+): Observer<T> => ({
+  next,
+  error: (error: unknown) => subscriber.error(error),
+  complete: () => subscriber.complete(),
+});
+
+/** Runs `run` on the first `false` of `active$`, then ends. */
+export const onFirstInactive = (
+  active$: Observable<boolean>,
+  run: () => void,
+): Subscription =>
+  active$
+    .pipe(
+      filter((active) => !active),
+      take(1),
+    )
+    .subscribe(run);
 
 /**
  * Subscribes to `source` and emits a loading sentinel only if nothing arrived
@@ -38,16 +64,14 @@ export const loadingUnlessSync = <T>(
 ): Observable<T | ResponseLoading> =>
   new Observable<T | ResponseLoading>((subscriber) => {
     let emitted = false;
-    const subscription = source.subscribe({
-      next: (value) => {
+    const subscription = source.subscribe(
+      forward(subscriber, (value) => {
         emitted = true;
         subscriber.next(value);
-      },
-      error: (error: unknown) => subscriber.error(error),
-      complete: () => subscriber.complete(),
-    });
+      }),
+    );
     if (!emitted && !subscriber.closed) {
-      subscriber.next({ state: loadingSymbol });
+      subscriber.next(loadingEvent());
     }
     return subscription;
   });
@@ -80,10 +104,7 @@ export const loadingUnlessSync = <T>(
 export const catchResponseError = <T>(): OperatorFunction<
   T,
   T | ResponseError<unknown>
-> =>
-  catchError((error) =>
-    of<ResponseError<unknown>>({ state: errorSymbol, error: error }),
-  );
+> => catchError((error: unknown) => of(errorEvent(error)));
 
 /**
  * Emits a loading sentinel before any values from the source observable.
@@ -105,40 +126,13 @@ export const catchResponseError = <T>(): OperatorFunction<
 export const startWithLoading = <T>(): OperatorFunction<
   T,
   T | ResponseLoading
-> => startWith({ state: loadingSymbol } as ResponseLoading);
+> => startWith(loadingEvent());
 
 /**
  * Wrapper for shareReplay with default parameters
  */
 export const defaultCache = <T>(refCount = true): MonoTypeOperatorFunction<T> =>
   shareReplay({ bufferSize: 1, refCount });
-
-// helper to apply an array of operator functions to an observable's pipe
-export const applyPipe = <T, R = any>(
-  obs: Observable<T>,
-  operations: OperatorFunction<any, any>[],
-): Observable<R> => (obs.pipe as any).apply(obs, operations) as Observable<R>;
-
-/**
- * Drops a loading event that directly follows another loading event. A pipe
- * emits its own loading for asynchronous processing, which would otherwise
- * repeat the loading its parent already sent.
- */
-const skipRepeatedLoading =
-  <T>(): MonoTypeOperatorFunction<T> =>
-  (source) =>
-    new Observable<T>((subscriber) => {
-      let lastWasLoading = false;
-      return source.subscribe({
-        next: (event) => {
-          const loading = isLoading(event);
-          if (!(loading && lastWasLoading)) subscriber.next(event);
-          lastWasLoading = loading;
-        },
-        error: (error: unknown) => subscriber.error(error),
-        complete: () => subscriber.complete(),
-      });
-    });
 
 /**
  * Runs user operators as one long-lived pipeline per node, so operators that
@@ -164,35 +158,40 @@ const skipRepeatedLoading =
  * with a reset delay lets go later). A subscriber that comes back gets the
  * latest state: the operator's replay if it is current, otherwise the last
  * event.
+ *
+ * One subscriber at a time: a node is shared by `fillStatefulObservable`
+ * (`shareReplay`), so the node itself does not multicast. A second concurrent
+ * subscriber takes the node over.
  */
 const isolatedPipeline =
   (
     operations: OperatorFunction<any, any>[],
-    accept: (event: any) => boolean,
+    accept: (event: unknown) => boolean,
     extract: (event: any) => unknown,
     wrap: (output: any) => unknown,
   ) =>
-  (raw: Observable<any>): Observable<any> => {
-    // state of this node, shared by its subscriptions
-    const downstream = new Set<Subscriber<any>>();
+  (raw: Observable<unknown>): Observable<any> => {
+    // state of this node, kept across its subscriptions
+    let consumer: Subscriber<unknown> | undefined;
     let feed: Subject<unknown> | undefined;
     let pipeline$: Observable<unknown> | undefined;
-    let generation = 0;
-    let feedHolders = 0;
     let output: Subscription | undefined;
     let source: Subscription | undefined;
     let last: { readonly event: unknown } | undefined;
-    let open = true;
-    let answered = false;
+    // pipeline output is: 0 stale (a newer event passed by), 1 current,
+    // 2 current and awaited (a fed event has no output yet)
+    let route: 0 | 1 | 2 = 1;
     let sourceDone = false;
+    // a loading that directly follows another is not sent again
+    let lastWasLoading = false;
 
     const emit = (event: unknown) => {
       last = { event };
-      downstream.forEach((subscriber) => subscriber.next(event));
-    };
-
-    const completeAll = () => {
-      downstream.forEach((subscriber) => subscriber.complete());
+      const repeated = lastWasLoading;
+      lastWasLoading = isLoading(event);
+      if (!(lastWasLoading && repeated)) {
+        consumer?.next(event);
+      }
     };
 
     const disconnect = () => {
@@ -204,76 +203,77 @@ const isolatedPipeline =
       feed = undefined;
       pipeline$ = undefined;
       last = undefined;
-      open = true;
+      route = 1;
       sourceDone = false;
+      lastWasLoading = false;
     };
 
     // nobody listens and the operators let go of the feed: release upstream
     const releaseIfIdle = () => {
-      if (source && downstream.size === 0 && feedHolders === 0) disconnect();
+      if (source && !consumer && !feed?.observed) disconnect();
+    };
+
+    // the operators ended the stream (takeUntil, take, first, or the source
+    // completed): complete the subscriber and release the source, as in
+    // plain RxJS
+    const finish = () => {
+      consumer?.complete();
+      disconnect();
     };
 
     const attach = () => {
       if (!pipeline$) return;
       output = pipeline$.subscribe({
         next: (value) => {
-          answered = true;
-          if (open) emit(wrap(value));
+          if (route) {
+            route = 1;
+            emit(wrap(value));
+          }
         },
         error: (error: unknown) => {
-          answered = true;
-          if (open) emit({ state: errorSymbol, error });
-          build();
+          if (route) {
+            route = 1;
+            emit(errorEvent(error));
+          }
+          // after the source completed nothing more can be fed: a rebuilt
+          // pipeline would get a completed feed and may fail again (`last()`)
+          if (sourceDone) finish();
+          else build();
         },
-        complete: () => {
-          // the operators ended the stream (takeUntil, take, first, or the
-          // source completed): complete the subscribers and release the
-          // source, as in plain RxJS
-          completeAll();
-          disconnect();
-        },
+        complete: finish,
       });
     };
 
     const build = () => {
       feed?.complete(); // lets operators of the previous pipeline go
       const current = new Subject<unknown>();
-      const own = ++generation;
       feed = current;
-      feedHolders = 0;
-      const held = new Observable<unknown>((subscriber) => {
-        if (own === generation) feedHolders++;
-        const subscription = current.subscribe(subscriber);
-        return () => {
-          subscription.unsubscribe();
-          if (own === generation) {
-            feedHolders--;
-            releaseIfIdle();
-          }
-        };
-      });
-      pipeline$ = applyPipe(held, operations);
+      // an operator letting go of the feed may leave the node idle
+      const held = current.pipe(finalize(releaseIfIdle));
+      pipeline$ = operations.reduce<Observable<unknown>>(
+        (piped, operation) => operation(piped),
+        held,
+      );
       output = undefined;
-      if (downstream.size > 0) attach();
+      if (consumer) attach();
       if (sourceDone) current.complete();
     };
 
     const onEvent = (event: unknown) => {
       if (isInactive(event)) {
-        open = false;
+        route = 0;
         output?.unsubscribe();
         build();
         emit(event);
         return;
       }
       if (accept(event)) {
-        open = true;
-        answered = false;
+        route = 2;
         feed?.next(extract(event));
-        if (!answered) emit({ state: loadingSymbol });
+        if (route === 2) emit(loadingEvent());
         return;
       }
-      open = false;
+      route = 0;
       emit(event);
     };
 
@@ -281,8 +281,7 @@ const isolatedPipeline =
       build();
       source = raw.subscribe({
         next: onEvent,
-        error: (error: unknown) =>
-          downstream.forEach((subscriber) => subscriber.error(error)),
+        error: (error: unknown) => consumer?.error(error),
         complete: () => {
           // the pipeline completes once its work is done, which completes
           // the subscribers (see attach)
@@ -292,53 +291,90 @@ const isolatedPipeline =
       });
     };
 
-    return new Observable<any>((subscriber) => {
+    return new Observable<unknown>((subscriber) => {
       const before = last;
-      downstream.add(subscriber);
+      consumer = subscriber;
       if (!source) {
         connect();
-      } else if (!output) {
-        // coming back to a pipeline kept alive by its operators
-        attach();
-        if (last === before && before) subscriber.next(before.event);
-      } else if (before) {
-        subscriber.next(before.event); // joining while others listen
+      } else {
+        if (!output) {
+          // coming back to a pipeline kept alive by its operators: the
+          // subscriber has seen nothing yet
+          lastWasLoading = false;
+          attach();
+        }
+        // the latest state, unless attaching has just emitted a newer one
+        if (before && last === before) {
+          subscriber.next(before.event);
+          lastWasLoading = isLoading(before.event);
+        }
       }
       return () => {
-        downstream.delete(subscriber);
-        if (downstream.size === 0) {
-          output?.unsubscribe();
-          output = undefined;
-          releaseIfIdle();
-        }
+        if (consumer !== subscriber) return; // taken over
+        consumer = undefined;
+        output?.unsubscribe();
+        output = undefined;
+        releaseIfIdle();
       };
-    }).pipe(skipRepeatedLoading());
+    });
   };
 
 export const pipeRaw: PipeRawOperator = (...operations) =>
-  isolatedPipeline(
-    operations,
-    () => true,
-    (event) => event,
-    (output) => output,
-  );
+  isolatedPipeline(operations, () => true, identity, identity);
 
 export const pipeValue: PipeValueOperator = (
   ...operations: OperatorFunction<any, any>[]
-) =>
-  isolatedPipeline(
-    operations,
-    (event) => isSuccess(event),
-    (event) => event,
-    (output) => output,
-  );
+) => isolatedPipeline(operations, isSuccess, identity, identity);
 
 export const pipeError: PipeErrorOperator = (
   ...operations: OperatorFunction<any, any>[]
-) =>
-  isolatedPipeline(
-    operations,
-    (event) => isError(event),
-    (event) => event.error,
-    (error): ResponseError<unknown> => ({ state: errorSymbol, error }),
-  );
+) => isolatedPipeline(operations, isError, (event) => event.error, errorEvent);
+
+/**
+ * Like `switchMap`, but the new inner stream is subscribed before the previous
+ * one is unsubscribed, so what both share is never left without subscribers
+ * (and is not released and loaded again). Only the newest inner stream's
+ * events pass.
+ */
+export const switchOverlapping =
+  <T, R>(project: (value: T) => Observable<R>) =>
+  (source: Observable<T>): Observable<R> =>
+    new Observable<R>((subscriber) => {
+      let generation = 0;
+      let inner: Subscription | undefined;
+      let innerDone = true;
+      let outerDone = false;
+      const outer = source.subscribe({
+        ...forward(subscriber, (value: T) => {
+          const own = ++generation;
+          const previous = inner;
+          inner = undefined;
+          innerDone = false;
+          const next = project(value).subscribe({
+            next: (result) => {
+              if (own === generation) subscriber.next(result);
+            },
+            error: (error: unknown) => {
+              if (own === generation) subscriber.error(error);
+            },
+            complete: () => {
+              if (own !== generation) return;
+              innerDone = true;
+              if (outerDone) subscriber.complete();
+            },
+          });
+          // a newer value may have arrived while subscribing
+          if (own === generation) inner = next;
+          else next.unsubscribe();
+          previous?.unsubscribe();
+        }),
+        complete: () => {
+          outerDone = true;
+          if (innerDone) subscriber.complete();
+        },
+      });
+      return () => {
+        outer.unsubscribe();
+        inner?.unsubscribe();
+      };
+    });

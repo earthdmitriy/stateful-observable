@@ -53,4 +53,28 @@ describe("RollingCache / createCache (LRU)", () => {
     cache.set("x", 1);
     expect(cache.get("x")).toBeNull();
   });
+
+  it("calls onRemove for evicted, reset and replaced values", () => {
+    const removed: number[] = [];
+    const cache = createCache<number>(2, undefined, (v) => removed.push(v));
+    cache.set("a", 1);
+    cache.set("b", 2);
+    cache.set("c", 3); // evicts a
+    cache.set("b", 20); // replaces 2
+    cache.set("b", 20); // same value: not removed
+    cache.reset((v) => v === 3);
+    cache.reset();
+
+    expect(removed).toEqual([1, 2, 3, 20]);
+  });
+
+  it("does not call onRemove for a value that may not be evicted", () => {
+    const removed: number[] = [];
+    const cache = createCache<number>(1, (v) => v !== 1, (v) => removed.push(v));
+    cache.set("a", 1);
+    cache.set("b", 2);
+
+    expect(removed).toEqual([]);
+    expect(cache.get("a")).toBe(1);
+  });
 });

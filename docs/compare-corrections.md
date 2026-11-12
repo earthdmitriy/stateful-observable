@@ -1,128 +1,132 @@
 # Comparing approaches: corrections log
 
-This is the record of how [Comparing approaches to async state](./compare.md) changed while it was written and reviewed. It is kept apart from the article so that the article reads as a comparison; the article states the current position on every point below.
+This is the record of how [Comparing approaches to async state](./compare.md) changed while it was written and reviewed. It is kept apart from the article so that the article reads as a comparison; the article states the current position on every point below. Only corrections that changed a claim or its framing are listed, not wording changes, and not defects of the library that were found while writing and have since been fixed (those are in the [changelist](./changelist.md)).
 
-This log lists what the agent got wrong and what changed. Each entry gives the original claim, what the correction was, and where the text stands now. Minor wording changes (renamed labels, rephrased cells, clarified examples) are not listed; only corrections that changed a claim or its framing are.
+The log is grouped by what changed, not by when; the chronological version is in the git history. Each entry carries two tags:
 
-Many of the corrections cluster around problems that are usually treated as unavoidable costs of an approach: who is allowed to write state and whether its origin can be traced, whether a failed derived value can be recovered cheaply, whether side effects creep into business logic, whether a dataflow can be seen as a whole, whether caching policy needs a framework. The agent's starting assumption was that these are open problems, and its first draft described the library's answers to them as gaps. They are design choices with consequences, and the corrections below record how the draft changed once they were pointed out and checked. Not all corrections favoured the library: some added limits that the first draft missed.
+- **Trigger:** *author* (the library's author challenged the claim), *self-review* (the agent's own re-reading or evidence audit), *source check* (the text checked against the library's source), *reader review* (independent agents that read only the documents, as a reader sent the link would), *contest* (the same page built with each approach and judged by one test suite, in the rx-evo repository).
+- **Direction:** *for* (the correction favours the library), *against* (it favours an alternative or adds a limit to the library), *neutral*. Entries in groups G and H are all neutral and carry only the trigger.
 
-## Corrected by the library's author
+Entries in group I come from the contest. Its entries were written by agents, and the statefulObservable and resources entries were steered by hand by the library's author, which the article states.
 
-1. **Global and shared state.**
-   - *Initial claim:* a store is the right tool for "genuinely global state" (auth, cart, cross-cutting data); shared data was presented as a reason to pick NgRx.
-   - *Correction:* shared app-wide data is handled with a root `InjectionToken` or service holding a stateful observable; feature services and components combine such sources in any combination without declaring the combination up front. This also became criterion 2.
-   - *Now:* a store is recommended only for state with many writers, or for its conventions and devtools.
+Entries in group E reframe something the draft called a gap as a design choice. They are where steering by the author would show, so each one states the cost that remains, where one does.
 
-2. **"No write path" and "not pure" as weaknesses.**
-   - *Initial claim:* the absence of a write path was a gap; that purity is only a convention enforced by code review, and that the library "is not side-effect free", were listed as weaknesses, as if specific to this library or as if the library claimed otherwise.
-   - *Correction:* the missing write path is intentional. Writable shared stores make the origin of a value hard to establish because anyone can write to them. The differences are in defaults, not in what can be forbidden (criterion 1). The library does not claim to be side-effect free (some effects are unavoidable); the aim is to keep business logic free of them.
-   - *Now:* stated as a design trade-off with its consequences, plus the "Purity is the path of least resistance" argument, marked as a design argument and not a measurement.
+## Summary
 
-3. **Caching policy.**
-   - *Initial claim:* "no cache policy": only `cacheKey`/`cacheSize` and `reload()`, no key-based caching to speak of; also that per-id stream caches grow without bound.
-   - *Correction:* key-based caching exists (`cacheKey`, LRU `cacheSize`, and `statefulObservableFactory` with `reset` and `reload`). The unbounded cache was a hand-written map in the example application, not the library's factory.
-   - *Now:* key-based caching listed as a strength; the factory is noted as `@experimental`.
+| Group | For | Against | Neutral | Total |
+| --- | --- | --- | --- | --- |
+| A. Claims about the library narrowed | 0 | 6 | 1 | 7 |
+| B. Limits of the library added | 0 | 3 | 0 | 3 |
+| C. Factual errors about a tool | 3 | 2 | 2 | 7 |
+| D. Treatment of the alternatives | 1 | 4 | 2 | 7 |
+| E. Gaps reframed as design choices | 14 | 0 | 2 | 16 |
+| F. Criteria and scope set by the author | 4 | 0 | 2 | 6 |
+| G. Coverage and disclosure added | 0 | 0 | 9 | 9 |
+| H. Misreadings caused by missing documentation | 0 | 0 | 11 | 11 |
+| I. Evidence from the contest | 6 | 1 | 1 | 8 |
+| **All** | **28** | **16** | **30** | **74** |
 
-4. **Time-based caching and retry.**
-   - *Initial claim:* stale-time, background refetch and retry with backoff are "not provided"; TanStack Query does these and this library does not.
-   - *Correction:* the library interoperates fully with RxJS, so any strategy can be composed with operators: wrap the loader in a time-limited share, drive `reload()` from a timer or event, put `retry({ count, delay })` in the loader.
-   - *Now:* verified with throwaway probes (a TTL operator on the loader gave one request inside the window and a fresh one after it; a timer calling `reload()` refetched on each tick). Two pitfalls found while doing so are documented: re-emitting an input with the same cache key is served from the cache, and `shareReplay({ windowTime })` is not a TTL. What remains missing is a packaged, tested policy layer, and the doc says so.
+Most corrections in favour of the library are in E and F, and most of those came from the author. Most corrections against it came from the agent's own reviews and from checking the text against the source.
 
-5. **Recovery of a derived graph.**
-   - *Initial claim:* `reload()` on combined streams was treated as one ordinary feature among others, and listed with "all-or-nothing" as its main caveat.
-   - *Correction:* the point is that every derived node carries `reload()` and reaches its sources, so a component holding the final handle can recover the whole subtree, whereas the other approaches need that plumbing written and maintained per derived handle. Out of the box graph meta states and recovery is criterion 4.
-   - *Now:* a dedicated section, a comparison table, and a multi-layer test (`tests/reloadGraph.spec.ts`).
+## A. Claims about the library narrowed
 
-6. **"Team structure" and "enforcement of code organisation".**
-   - *Initial claim:* the library offers "light conventions" and lacks the enforced structure of a store; later, that it does not decide where files, tokens or services live.
-   - *Correction:* the graph is the uniform structure: every piece of dataflow is an isolated wire exposed through the same handle. File layout belongs to the host framework, not to a framework-agnostic library.
-   - *Now:* folded into criterion 1; the "Uniform structure" table row says so, and the bullet about code organisation was removed.
+- **A1. Combined error type** *(source check · against)*. "Always a tuple with a typed `false` entry per source" → exact for tuples; for an array of unknown length the type is `R[]` / `E[]`, and the `false` entries are missing from the type.
+- **A2. Factory bound** *(source check · against)*. "Bounded by `cacheSize`" → the bound covers unused entries only; entries with subscribers are never evicted.
+- **A3. RxJS depth** *(source check, reader review · against)*. "What remains is the operator basics", "handles most traps" → an explicit list of the traps handled; lifetimes, caching operators, write operators and interop still take RxJS knowledge, and the library's own API is listed as a learning cost.
+- **A4. Dataflow tool** *(source check · against)*. `angular-mermaider` was presented without its author → the library's author's proof of concept, run on one example.
+- **A5. One producer, and the pending hold** *(source check · against)*. "Every derived value has exactly one producer" ignored connections, whose producer is chosen at runtime (connections were later removed from the comparison, G9). "The pending hold removes the outdated combinations of `combineLatest`" → the parity tests cover two kinds of outdated combination, not all of them.
+- **A6. Traceability** *(self-review, author · neutral)*. The library was credited with a traceable origin and vanilla RxJS with discipline, although a derived `pipe` and a `computed` have no write API either. The author objected that status flags in vanilla RxJS are usually writers, and that `linkedSignal` and resources are derived yet writable. Both points are kept: criterion 1 states the argument in three steps, the row became "Who can write a value", and *what happened*, *which call site* and *who can* are separated.
+- **A7. Expandable rows** *(source check · against)*. "Expanding a row again is served from the factory's cache" → factory entries have no result cache of their own; with the default `refCount` a row expanded again fetches again, and only `refCount: false` keeps it.
 
-7. **"No central overview, no devtools to draw it."**
-    - *Initial claim:* with no central registry the dataflow cannot be seen as a whole.
-    - *Correction:* the accent was wrong. Without a pure graph, the author's position is that collecting a reliable, deterministic map of a dataflow is expensive at the least. `statefulObservable` encourages exactly that and makes it the path of least resistance, so the map can be extracted from the code by a tool. `angular-mermaider` already does this for a component and has been run on the running example. In the other approaches the same map needs DIY and discipline to keep the code analysable.
-    - *Now:* the "Dataflow as a diagram" section is built on that premise. The limits of the tool and of any static view are listed there, kept apart by owner, and are not what the correction is about.
+## B. Limits of the library added
 
-8. **Missing intent: modular, atomic code.**
-    - *Initial claim:* the four intents given at the start were the whole yardstick.
-    - *Correction:* a further intent is to reduce resistance for writing highly modular, atomic code.
-    - *Now:* criterion 5, a strength, a table row, and a limit (no central registry, per-node lifetime decisions, granularity is a team habit).
+- **B1. Interop errors** *(self-review · against)*. "Interop only loses the state information" → a probe showed that through RxJS (`combineLatest([from(stream)])`) the first error event ends the consumer's stream, `firstValueFrom` rejects, and an object observer receives `error` and then further `next` calls.
+- **B2. Errors reported to `ErrorHandler`** *(self-review · against)*. The caveat that `| async` on the stream reports each error event to Angular's `ErrorHandler` moved from the signals chapter into the library's own problems.
+- **B3. Operators in pipes** *(reader review · against)*. Limits documented only in the ADR are now in the comparison: a value dropped inside a pipe leaves the node pending (with the boundary explained), operator state restarts after an error, roots never complete.
 
-9. **Signals as a presentation layer, not only an alternative.**
-    - *Initial claim:* the "Choosing" section assigned signals and resources to "local, synchronous UI state and simple one-shot loads", as if signals were what you use instead of stateful observables for async data.
-    - *Correction:* stateful observables interoperate with signals (`toSignal` accepts them), so async data can be combined and recovered in stateful streams and then spread synchronously across presentational components as signals.
-    - *Now:* "Choosing" and section 3 describe it as a layering. One detail is left unverified there: what `toSignal(stream)` does on an error event.
+## C. Factual errors about a tool
 
-10. **"Typed errors: Yes" for vanilla RxJS.**
-    - *Initial claim:* the comparison table said vanilla RxJS has typed errors, and gave NgRx a plain "Yes, via action payloads".
-    - *Correction:* an `Observable<T>` has no error type, so the error channel is `unknown` or `any`. Typed errors in vanilla RxJS are something you build by modelling errors as values. The same applies at the entry point of NgRx and of this library: both receive an untyped error and the type is established when it is converted.
-    - *Now:* the row says so for all four. For this library, the type is tracked from `pipeError` onwards, including through `combineStatefulObservables`.
+- **C1. Key-based caching** *(author · for)*. "No cache policy", and per-id caches that grow without bound → `cacheKey`, LRU `cacheSize` and `statefulObservableFactory` exist; the unbounded cache was a hand-written map in the example application.
+- **C2. Typed errors in vanilla RxJS** *(author · for)*. "Yes" for vanilla, "Yes, via action payloads" for NgRx → an `Observable<T>` has no error type, so every approach receives `unknown` and types it on conversion; the library tracks the type from `pipeError` on.
+- **C3. Shape of the combined error** *(self-review · for)*. "Several errors arrive as an array with `false`" → it is a tuple with one entry per source also when one source failed (narrowed later for arrays, A1).
+- **C4. Resources: reload and the error status** *(author, self-review · neutral)*. Rechecked in the Angular source: `reload()` keeps the value of a resolved resource and is ignored while idle or loading; in the `error` status `value()` throws (November 2026 source), so consumers need a `hasValue()` guard.
+- **C5. Resources from memory** *(self-review · neutral)*. Claims about eagerness, an untyped error and writability came from memory → checked against the Angular 20 guide and source: a params change resets the value, construction starts the loader, `asReadonly()` encapsulates writes.
+- **C6. Resources out of date** *(self-review · against)*. "No documented way to keep the previous value" and "`resource` is experimental" → the current guide documents `withPreviousValue`, and only `resourceFromSnapshots` is flagged; unsupported cells ("Limited", "Light") became "Not assessed".
+- **C7. NgRx keeps old data** *(self-review · against)*. "A store keeps old data only if you build it" → reducers and `patchState` keep it by default; local stores exist, and "global" is narrowed to the classic root store.
 
-11. **"Optimistic updates: none".**
-    - *Initial claim:* with no write path there is no optimistic update, and the UI shows the old value until the server answers.
-    - *Correction:* optimistic UI can be implemented by listening to `pending$`: while a write is pending, show the submitted value as an overlay. The data is never patched, so rollback is just dropping the overlay.
-    - *Now:* documented as a derived overlay, with the sharp edges found by a probe (an overlay computed from `value$` and `pending$` can briefly double-apply a non-idempotent change; the default `switchMap` can cancel an in-flight write) and a note that you write the overlay yourself.
+## D. Treatment of the alternatives
 
-12. **Wiping data on fetch in vanilla RxJS.**
-    - *Initial claim:* the table said vanilla RxJS wipes rendered data "if you wrap each request and emit an empty state", which made wiping sound like a typical risk of plain RxJS.
-    - *Correction:* a plain `switchMap` emits nothing when a new request starts, so the old value stays. Wiping appears only when someone writes it in (`startWith(null)`) or implements a state operator wrongly.
-    - *Now:* the cell says "No by default" and lists those two ways it creeps in.
+- **D1. Wiping in vanilla RxJS** *(author · against)*. Vanilla "wipes rendered data" → a plain `switchMap` keeps it; wiping appears only when written in (`startWith(null)`) or by a faulty state operator.
+- **D2. Vanilla samples stricter than warranted** *(self-review · against)*. Variadic tuple typing was ignored; "loading and error at once" and "does not say which source failed" are labelled as properties of a minimal helper; "the buffer cannot be reset" became "`shareReplay` has no reset signal; a workaround is code you write".
+- **D3. Vanilla example too simple** *(author · for)*. The first draft's `tap` plus `Subject` flags were replaced by a `withState` operator in self-review, which then looked like a complete answer. It now shows a combination and a shared service, and the caveats measured on running code (extra emissions and equality, wrapped values in operators).
+- **D4. Inconsistent table cells** *(self-review · neutral)*. Typed errors described the same unchecked annotation differently for vanilla and NgRx; key-based cache "No" for signals became "DIY" like the others; NgRx loads "on call or hook"; vanilla devtools "None built in".
+- **D5. NgRx Toolkit** *(reader review · against)*. The store was judged on hand-written flags → `withCallState` is described, with what it does not cover (merging across stores, recovery).
+- **D6. Laziness of resources** *(reader review · against)*. The cell "No" → "No; gate it with `params` (DIY)".
+- **D7. Signals as a presentation layer** *(author · neutral)*. Signals were placed only as an alternative for local state → they layer on top of stateful streams through `toSignal`.
 
-13. **Maturity framed one-sidedly.**
-    - *Initial claim:* maturity was summed up as "Low (0.6.0)" with a one-maintainer bus-factor warning, which reads as if the approach itself were new and unproven.
-    - *Correction:* `statefulObservable` is not a completely new solution. It is built on RxJS and intended to solve common problems of real-world applications; the package is young, the foundation is not.
-    - *Now:* the table separates the package (low, 0.6.0, one maintainer) from its foundation (RxJS, very high; thin layer, not a new paradigm). The limits bullet adds that the design grew out of earlier iterations in the ADR and has a test suite of over 250 tests, while stating that there is no data on adoption or production use.
+## E. Gaps reframed as design choices
 
-14. **Laziness versus eagerness was missing, and the resource claim was left unverified.**
-    - *Initial claim:* the comparison had no row for laziness, and for resources it said only that the guide does not state when loading starts, with "in my experience" eager.
-    - *Correction:* this is one of the author's reasons for not using signals for async data. A declared or injected resource means a running request, while with observables or `statefulObservable` a collapsed section is trivial: an async pipe under an `@if` starts the request only when the section is expanded. With resources it is DIY and not trivial. The same goes for a shared catalog: a resource held in a service starts when the service is first injected, even if the consumer does not need the data.
-    - *Now:* a table row and text for all four approaches. The resource behaviour was checked in the Angular source: construction registers an effect that runs the loader as soon as `params` has a value, and reading the resource does not start or defer anything. Gating `params` with a signal or creating the resource in a conditionally rendered component are the ways to make it lazy. For `statefulObservable`, re-expanding repeats the request unless a `cacheKey` cache or a shared stream serves it.
+- **E1. No write path, "not pure"** *(author · for)*. Listed as weaknesses → an intentional trade-off: writable shared stores make the origin of a value hard to establish; the difference is in defaults, not in what can be forbidden. *Remaining:* no local patching; client-owned state (drafts, offline) is out of scope; purity is a default, not enforced, and the argument is not measured.
+- **E2. Time-based caching and retry** *(author · for)*. "Not provided" → composed with RxJS operators (TTL on the loader, `reload()` from a timer, `retry` in the loader), verified with probes. *Remaining:* no packaged, tested policy layer; a repeated key is a cache hit; `shareReplay({ windowTime })` is not a TTL.
+- **E3. Recovery of a derived graph** *(author · for)*. One feature among others → criterion 4, with its own section, table and test. *Remaining:* plain `reload()` refetches healthy sources; `where` needs names, `onlyFailed` a subscription, `path` a stable order.
+- **E4. Structure** *(author · for)*. "Light conventions, no enforced structure" → the graph with one handle is the uniform structure; file layout belongs to the framework. *Remaining:* a design argument; granularity is a team habit.
+- **E5. Overview of the dataflow** *(author's position · for)*. "No central overview" → a pure graph makes the map extractable by a tool. *Remaining:* one proof-of-concept tool by the author, one example; runtime wiring cannot be resolved statically.
+- **E6. Optimistic UI** *(author · for)*. "None" → a derived overlay; rollback is dropping it. *Remaining:* hand-written; can briefly double-apply a non-idempotent change; the write operator has to be chosen.
+- **E7. Partial results** *(author · for)*. "DIY" → each leaf depends only on what it needs, so a failure blocks only its descendants. A combination means "needs all of these", which is what a leaf that requires its sources wants; blocking a leaf on data it does not require is an antipattern in any approach, and the graph shape is what avoids it without extra code.
+- **E8. Unread errors** *(self-review, author · for)*. "Errors live in a separate channel" as a problem → the only approach that reports an unread error. *Remaining:* a custom `log` replaces the report.
+- **E9. Fixed combination rule** *(self-review · for)*. The fixed priority as a limit → a feature, since the others have no rule. *Remaining:* a pending source delays an error that is already known.
+- **E10. Problems shared by every approach** *(self-review · for)*. Lifetime decisions, hand-composed time policy, events in RxJS, no registry, granularity, hand-written optimistic updates were listed against the library → moved to the baseline note, and the same pruning was applied to the other three lists.
+- **E11. Naming for diagnostics** *(self-review · for)*. A problem → a condition of the `where` feature that the others do not have.
+- **E12. RxJS fluency** *(author · for)*. "Needs RxJS" as a cost → every approach needs fluency in its own model; the row became "What you need to know". *Remaining:* the library's API and part of the RxJS depth (A3).
+- **E13. "Glitches"** *(author · for)*. Intermediate combinations were added as a problem of push-based RxJS and then reverted: the term comes from the signals RFC, and emitting on every change is `combineLatest`'s contract. A neutral push-versus-pull row replaced it. *Remaining:* `reload()` of synchronous sources can emit a stale mix.
+- **E14. Triggers and writes** *(reader review · neutral)*. The criticism of stores ("anyone can invoke an action") was not applied to `reload()` → triggers re-read the source of truth, writes replace it. *Remaining:* an unwanted trigger costs requests and pending states; the premise that the frontend owns no truth except user input is the author's.
+- **E15. Cross-feature invalidation** *(reader review, author's position · neutral)*. Not discussed → an intended trade-off: no global registry. *Remaining:* another feature's handle has to be passed explicitly; there is no invalidation by key.
+- **E16. Maturity** *(author · for)*. "Low", which read as a new paradigm → the package is young, its foundation (RxJS) is not. *Remaining:* 0.x, one maintainer, no data on adoption.
 
-15. **"DIY for partial results".**
-    - *Initial claim:* in the graceful-degradation row, partial results were called DIY for `statefulObservable`, because one failed source turns a whole combination into an error.
-    - *Correction:* that overclaims. The library encourages writing wires so that each leaf depends only on the data it requires. No required data means nothing to show for that leaf, and a broken wire blocks only its descendants; every other leaf still renders. A combination is deliberately "needs all of these".
-    - *Now:* the row says partial results come from the graph itself, and that data which is merely nice to have belongs in its own leaf.
+## F. Criteria and scope set by the author
 
-16. **Graceful degradation was measured on a single request.**
-    - *Initial claim:* the graceful-degradation row (and criterion 3) credited tools for turning an error into a state, keeping a stream alive and offering a retry, which is the handling of one request.
-    - *Correction:* that is simple in every approach and is not worth claiming as supported. The difference is in a complex dataflow: a failure deep in layers of derived and combined data, and what happens to its descendants, to everything else, and to recovery.
-    - *Now:* criterion 3 and the row are about complex dataflow, and the single-request handling is stated as not counted.
+- **F1. Shared state** *(author · for)*. "A store is right for global state" → root tokens or services holding stateful observables, combined anywhere (criterion 2); a store for many writers.
+- **F2. Modular, atomic code** *(author · for)*. Added later as criterion 5.
+- **F3. Graceful degradation** *(author · neutral)*. Credited for single-request handling → only complex dataflow is counted, since one request is simple everywhere.
+- **F4. Laziness** *(author · for)*. Missing → a row for all four; the eagerness of resources verified in the Angular source, with the ways to gate it.
+- **F5. Events** *(author · neutral)*. Missing → composing events is RxJS territory and a non-goal of the library.
+- **F6. Graph-shaped dataflow as the foundation** *(author · for)*. Progressive loading, graceful degradation and recovery were treated as separate features → stated as consequences of one topology (leaves that depend only on what they need), with the library's aim being to make that topology cost nothing extra; the split into leaves is not enforced.
 
-17. **Event management was missing.**
-    - *Initial claim:* the comparison had no row for events. Everything about "unusual flows" was grouped under sockets, polling and orchestration, and it was left open whether NgRx covers event handling.
-    - *Correction:* events ("something happened", with or without a payload) and effects derived from one event or a set of events, with debounce, merges and time windows, are where RxJS shines. "Managing effects" here means composing them, not a single side effect. NgRx does not remove the need: even with a facade, events are handled with RxJS primitives, and signals' `effect()` is not an event-composition tool.
-    - *Now:* a table row, a non-goal for `statefulObservable`, evaluation bullets for each approach, and a "Choosing" bullet.
+## G. Coverage and disclosure added
 
-18. **The store example was the classic NgRx store.**
-    - *Initial claim:* section 4 and the table's NgRx column described classic `@ngrx/store` (actions, reducers, effects, selectors), with `@ngrx/signals` as a side note.
-    - *Correction:* `@ngrx/signals` is the more current approach, and several statements did not carry over to it: it is provided locally or at root and is not global by default, writes go through the store's methods with protected state, and there is no action log in what I read.
-    - *Now:* section 4 and the table column are about SignalStore, based on the NgRx guide, with secondary sources marked. Classic `@ngrx/store` is kept as a short alternative. Older entries below that mention actions, reducers and a facade refer to the earlier draft.
+- **G1. Bias** *(self-review)*. The document now opens with its origin and a list of criteria it does not optimize for.
+- **G2. Evidence** *(self-review)*. Evidence kinds are tagged; probes are throwaway; competitor cells are readings of documentation; author rationale is attributed.
+- **G3. Read-through** *(self-review)*. Inconsistencies fixed: a trap claimed as measured that came from the ADR, a wrong cross-reference, a colliding sample field, a duplicated row, a prediction read as a feature.
+- **G4. SignalStore** *(author)*. The store chapter described classic `@ngrx/store` → `@ngrx/signals`, with the classic store as an alternative.
+- **G5. TanStack Query** *(self-review, reader review)*. Missing, then one unverified paragraph → evaluated from the Angular adapter's documentation (not run).
+- **G6. Choice of alternatives** *(reader review)*. Explained: a baseline, a built-in option and popular libraries; others are not covered.
+- **G7. SSR, testing, progressive rendering** *(reader review)*. Added: SSR as inherited from RxJS and Angular *(reasoned)*, testing as plain RxJS, progressive rendering as the author's design argument.
+- **G8. Lists** *(reader review)*. Pagination, infinite and virtual scroll and expandable rows, from the author's demo application (read, not run).
+- **G9. Connections removed** *(reader review, author)*. `statefulConnection` raised more questions than it answered and is not a primary feature; it is documented in [QoL](./QoL.md), and the comparison mentions it only as a wiring decision.
 
-19. **The vanilla RxJS example looked simple and hid caveats.**
-    - *Initial claim:* the first draft showed vanilla RxJS as `tap` plus `Subject` flags, which a competent developer would not write (the agent corrected that in its own review). The replacement, a `withState` operator, then looked like a complete answer: a dozen lines that keep the previous value and survive errors.
-    - *Correction:* the author pointed out that the implementation appeared simple but has multiple caveats, and that the example had no combination and no shared data in a service, which made it look as if two helpers could replace the library. The caveats of what the sample does implement, each measured or shown on running code:
-      - **A tradeoff: no wiping, but extra emissions.** To avoid wiping the UI, the example keeps the previous value by copying the state. That emits a new state when each request starts and when it ends: a value consumer received four values for two requests, with the previous value re-emitted, and potentially re-renders. The first remedy, `distinctUntilChanged`, did not account for the shape of the data. By reference it works on the extracted value of a single stream, but a combined value is rebuilt on every emission and the state wrapper is a new object each time, so those need a deep or custom comparator, which has its own cost.
-      - **Wrapped values in operators.** Even a plain `map` added to a descendant stream receives the container and not the value, so it has to deal with the loading and error fields before it can touch the value. Dependent steps and higher-order operators are worse: bypass branches for loading and error, and a `concatMap` that misbehaves in that place (the ADR's analysis).
-    - *Now:* the chapter opens with its main point, that the rabbit hole is deep, shows the combination and the shared service, and lists the traps the sample does not cover (cold by default, combination rules, recovery, lifetimes, untyped errors) under Problems.
+## H. Misreadings caused by missing documentation
 
-## Challenged and confirmed, with caveats
+Readers misunderstood these because the documentation did not answer them. Each entry says where the answer now is.
 
-20. **Resources and `reload()`.** The author asked for a recheck of "on `reload()`: no" (the claim that a resource does not wipe data on reload). The Angular source confirmed it for a resolved resource, with two caveats that were added: `reload()` does nothing while a load is in flight, and after an error `value()` is already the default. A recheck of the current source (November 2026) found that `value()` now throws in the `error` status and returns the default only while reloading after an error; the text says so.
+- **H1. Saving** *(reader review)*. "A save shows the same pending as a fetch" read as the only way to write → "No write path, by design" gives two ways to save and a CRUD flow; see also [recipes](./recipes.md#putting-update-result-into-stream).
+- **H2. What `reload()` needs** *(reader review)*. Read as needing names → the recovery limits open with "plain `reload()` needs no names, no subscription".
+- **H3. User code in the samples** *(reader review)*. The library's helpers seemed counted as given → a list of what is user code in each sample.
+- **H4. Unread errors and reporting** *(reader review, source check)*. The report was called a "warning" and read as the reporting path → it is a `console.error` and a development signal; reporting belongs in `pipeError`; `log` is a tracing hook for a whole subtree.
+- **H5. Errors during a retry, three subscriptions** *(reader review)*. Why an error stays visible during a retry, and whether separate `value$` / `pending$` / `error$` give inconsistent views → both explained in the features of section 2.
+- **H6. The running sample** *(reader review)*. It used `| async` on the stream, which the text warned about → it reads `value$`, with the other form as a note.
+- **H7. `subscribe`** *(author)*. The extended observer (`pending`, `active`) was undocumented → described next to interop.
+- **H8. `value$`** *(author)*. The ADR listed it as a candidate for deprecation → a decided ADR entry keeps it.
+- **H9. Mounted views after logout** *(reader review, author)*. Read as a data-leak risk → the stateful block pattern is extended to remove its content on `active(false)`.
+- **H10. Cache lifetimes** *(reader review)*. No model of what holds data → a table under "Key-based caching".
+- **H11. Typed errors through the graph** *(reader review, author)*. "After `pipeError`" hid that the type is carried through pipes and combinations → the table cell says so.
 
-## Corrected during the agent's own review
+## I. Evidence from the contest
 
-21. **NgRx.** The first draft said a store keeps old data only if you build it; reducers keep it by default. It also ignored `@ngrx/signals` and local stores, which are now covered, and the claim that stores are global is narrowed to the classic root store.
-22. **Angular resources.** Claims about eagerness, an untyped error and writability came from memory. They were checked against the Angular 20 guide: a params change resets the value (documented), eagerness was later confirmed in the Angular source (see correction 14), and `asReadonly()` can encapsulate writes.
-23. **A missing competitor.** TanStack Query, the closest relative in purpose, was not mentioned in the first draft.
-24. **Bias.** The document was written to the library's own criteria without saying so. It now opens with its origin and a "Criteria it does not optimize for" list.
-
-## Corrected in a second review (evidence audit)
-
-25. **"Traceable" was one word for three questions, and the library's edge was overclaimed.** The table cell "Origin of a value traceable" credited the library with structure and vanilla RxJS with discipline, but a derived `pipe` and a `computed` signal have no write API either. The author objected that this understated the library: in vanilla RxJS, loading and error flags are often side-effect Subjects (writers), and `linkedSignal` and resources are derived yet writable. Both points hold. Criterion 1 now states the argument once, in three steps (no tool can forbid it; the question is the default path; here the reason for status writers disappears), with the prevalence of the status-flag pattern marked as the author's experience plus one rough code search (existence, not rate), and vanilla's way out marked DIY. The purity bullet lists what would count as evidence. The cell is now "Who can write a value"; the author's perspective separates *what happened*, *which call site* and *who can*, and states that "devtools are not attached in the field" is an unverified assumption.
-26. **Angular resources: two statements were out of date.** The document said the guide documents no way to keep the previous value on a params change and that `resource` is experimental. The current guide describes `withPreviousValue` (with `linkedSignal` and `resourceFromSnapshots`) and shows no experimental flag on `resource` itself, only on `resourceFromSnapshots`. The text and the table now say a documented pattern exists and that the status needs checking per version. "`error()` is untyped" was softened because the type was not looked up, and "Runtime devtools: Limited" and "Uniform structure: Light" were replaced with "Not assessed" because nothing supported them.
-27. **The vanilla RxJS samples were stricter on vanilla than warranted.** "Overloads or give up per-source types" ignored variadic tuple typing; "loading and error at once" and "does not say which source failed" are properties of a minimal helper and are now labelled so; "the buffer cannot be reset from outside" became "`shareReplay` has no reset signal; a workaround is code you write".
-28. **Table cells that were inconsistent or unsupported.** Typed errors: vanilla "No" versus NgRx "By annotation" described the same unchecked annotation, so both now say so. Key-based cache: signals "No" became "DIY" like the others. NgRx "No, starts on call" ignored that reading state never triggers anything, and now says loads happen on call or hook. Vanilla "Runtime devtools: No" became "None built in".
-29. **Evidence kinds were not stated.** The document now says what kinds of evidence it uses, that the probes were throwaway and not reproducible from the repository, that competitor cells are mostly readings of documentation, and that TanStack Query, ComponentStore and `httpResource` were not evaluated. Author rationale for not shipping devtools, the "store or streams" heuristic and the NgRx recommendation are attributed to the author.
-30. **Interop was described as only losing state information.** A probe showed more: through RxJS (`combineLatest([from(stream)])`) the first error event ends the stream for that consumer, and a direct object observer receives `error` and then further `next` calls. The interop bullet says so and recommends `value$`, `pending$` and `error$`; the `toSignal` caveat is now verified on the library side, and the `toSignal` throw-on-read behaviour from its API reference.
-31. **Angular resources in the error status.** The text said that after an error `value()` is the default. The current source throws from `value()` in the `error` status (the default is returned only while reloading after an error), so consumers need a `hasValue()` guard. Eagerness, `reload()` being ignored while idle or loading, and abort on destroy were rechecked in the same source and still hold.
-32. **Inconsistencies found in a read-through.** The vanilla chapter claimed every trap was measured, though one comes from the ADR; a cross-reference pointed "above" to a list below; the SignalStore sample defined a `loading` computed that would collide with the state field; the table repeated retry, which the baseline note covers; a prediction about signals ("familiarity will be good") read as a feature; a bullet named a class from the example application. The running example now says why the client and the recovery on a new id are not shown in every sample. Inline hedges were replaced by evidence tags defined once under "Read this first", and this log was moved out of the article.
+- **I1. Batching** *(contest · for)*. No row → a "Batching ids into one request" row: hand-written in vanilla RxJS (136 lines, met), a batch factory here, not met by the resources and SignalStore entries.
+- **I2. Wiping on fetch** *(contest · for)*. "No" for vanilla RxJS and SignalStore → no for one stream or one store field; a keyed cache starts a new key empty, and on the contest page both blanked a section on a key switch, while this library kept the last value under the spinner.
+- **I3. Resources as a shared cache** *(contest · for)*. Only "no key-based result cache" → a resource is a per-owner read; used as a shared cache (twelve registries, 289 lines) it cannot both keep and cancel an entry, writes blank by changing the key, and batching is not met. The article states where it fits (a simple page with no shared data) so this reads as a misfit, not a defect.
+- **I4. SignalStore cache and laziness** *(contest · for)*. "Not lazy by consumption" → what building it costs: a keyed cache with observer counts and in-flight subjects (132 lines), attach and detach from an `effect()` wrapped in `untracked()`, and no batching.
+- **I5. Cost of DIY in vanilla RxJS** *(contest · neutral)*. "Key-based result cache and reload are DIY" → measured: about 400 lines of generic code, and every scenario met. It supports "the entrance to the hole" and shows that DIY works.
+- **I6. Unaided agent: other shapes are possible** *(contest · against)*. The contest's statefulObservable agent, deliberately not given the recipes, needed hand steering on the patterns the design arguments call the default. It was first listed as a problem of the library; that bullet was removed once the recipes were checked (I8), and a short notice stays: on a project without settled patterns, other shapes are possible.
+- **I7. Factory entries after 0.8.0** *(source check · for)*. "No result cache of its own" and "resets or reloads all of its entries, not a partial key" → an entry keeps its last completed value without consumers, `refCount` only decides whether a load in flight is cancelled, one key reloads through its own stream, and a batch factory has the same API.
+- **I8. Recipes checked** *(contest · for)*. "Whether an agent given the recipes finds it is not checked yet" → an agent given the recipes wrote the intended pattern on every steering point of a slice of the page, with no steering; the unaided run's bullet left the problems list.

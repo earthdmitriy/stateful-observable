@@ -2,6 +2,29 @@
 
 All releases of `@rx-evo/stateful-observable`. The readme lists only the latest release.
 
+## 0.8.0
+
+### New
+
+- `statefulObservableFactory().project(input$, { key?, combine? })`: a stream that follows an input observable and shows, for each emitted value, the same entry `get(value)` returns (the value is keyed with the factory's `cacheKey`). Projections and `get` of one key share one entry: one request, one state, and `reload()` on any of them reloads all of them. Projections are separate streams (a projection can move to another key), so only the entry is shared, not the projection object. How long a key is kept follows `refCount` and `cacheSize` of the factory, as for `get`. `reload()` on a projection reloads the entry it shows; `factory.reload()` and `factory.reset()` act on the entries, and `reset(true)` completes projections too. Optional `key` and `combine(response, value)` work as for `projectMany`; a value with the same key as the current one is not shown again.
+- `statefulObservableFactory().projectMany(ids$, { key?, combine? })`: a stream that follows an observable of lists and shows, for each list, the entries `get` returns for its items, combined as with `combineStatefulObservables`: `Response[]` in input order (duplicates included), pending while any entry loads, an error list of `error | false` per item, and `[]` at once for an empty list. When the list changes, the new entries are subscribed before the previous ones are released, so an item that stays keeps its load in flight (no second request or batch); items that left are released as for `get`. A list with the same keys in the same order is skipped. `reload()` reaches the current combination, so `onlyFailed` and `path: [i]` work. The factory's `mapOperator` is not used. Optional `key` selects the input of an item (required by the types when the items are not inputs), and optional `combine(responses, items)` computes the value from the responses and the items of the list they were loaded for: a list with the same keys but other items runs `combine` again without loading, so data outside the key never meets responses of another list; a throw in it becomes an error event.
+- `statefulObservableFactory({ name })` and `statefulObservableBatchFactory({ name })`: a debug name given to every entry and to the streams made with `project` and `projectMany` (they were `"unnamed"`), so it shows in logs and `reload({ where })` can match it.
+- `statefulObservableBatchFactory({ loader, idOf, batchTime?, maxBatchSize? })`: a factory for backends that load many ids in one request. Consumers use it as `statefulObservableFactory` (`get`, `project`, `projectMany`, `reset`, `reload`, same options for `active`, `refCount`, `cacheSize`, `mapOperator`). The loader takes the ids of a batch and returns a list of items, matched to ids with `idOf` (compared as strings, so `1` matches `"1"`). Ids requested within `batchTime` ms (default `0`, one tick), counted from the first one, are sent together, at most `maxBatchSize` per loader call. An id missing from the response gets an error, a failed batch fails each of its ids, reloading one entry requests only its id, and reloads within one window share one batch. A consumer leaving before the batch is sent takes its id out; a sent batch is cancelled once all of its consumers have left.
+
+### Changed
+
+- `statefulObservableFactory` entries keep the value of their last load that completed, also without subscribers: a consumer that comes back is served synchronously, with no request and no loading event. With the default `refCount: true` a load still in flight is still cancelled when the last consumer leaves, so the factory now cancels what nobody waits for and keeps what has arrived. In 0.7.x `refCount: true` loaded a key nobody showed again on the next visit, and `refCount: false` was the only way to keep it (and also let abandoned loads run). `refCount` now only decides whether an entry stays connected to its loader (`false`: for live streams, prefetching, or work that must finish). Errors and loads that did not complete are not kept. A kept value is dropped by `reload()` (the entry's or the factory's), by `active: false` (one watch per factory while some value is kept, also with no subscribers) and when the entry leaves the cache. An entry releases its loader one microtask after its last consumer leaves, so a request that completes in the same callback as its value (`firstValueFrom`, `take(1)`) is still kept. Applies to `statefulObservableBatchFactory` too. See the [ADR](./adr.md#keep-settled-values-in-factory-entries).
+
+### Fixed
+
+- `statefulObservableFactory` with `refCount: false` no longer leaks entries that leave the cache. An entry dropped by `cacheSize` eviction, `reset(false)` or `reset(true)` stayed subscribed to its loader and to `active`, and kept its last value, for the lifetime of the app (`reset(true)` completed its subscribers but did not unsubscribe the source). Such an entry is now ended when it leaves the cache: its loader and `active` are unsubscribed, and a reference to it kept elsewhere replays its last value and completes instead of connecting again. With the default `refCount: true` nothing changes: an entry was already released when its last consumer left.
+
+## 0.7.1
+
+### Fixed
+
+- `active: false` clears the result cache also when the stream has no subscribers. Only streams with a `cacheKey` were affected, which is rare for shared user data (a balance, account info or settings usually have no input key and no result cache). In 0.7.0 the cache was cleared only while something was subscribed, so a root with `cacheKey` and `refCount: true` that nobody read during logout and relogin served the previous user's cached result to the next subscriber. While a stream with `active` and `cacheKey` has no subscribers it now watches `active` until the first `false` (streams without `cacheKey`, factory entries included, have nothing to drop and do not watch), drops the cache then and stops watching; a subscriber that returns takes over as before. The cache still survives unsubscribing and subscribing again while logged in.
+
 ## 0.7.0
 
 ### New
@@ -31,7 +54,7 @@ All releases of `@rx-evo/stateful-observable`. The readme lists only the latest 
 - Memory leak: an operator in `.pipe(...)` that completes the stream (`takeUntilDestroyed()`, `takeUntil`, `take`, `first`) now completes the subscribers and releases the source. Since 0.4.0 it only ended the processing of one event, so `stream.pipe(takeUntilDestroyed()).subscribe(...)` without an unsubscribe stayed subscribed to its source after destroy.
 - `statefulObservableFactory().reset(false)` keeps entries that still have subscribers (previously it dropped every entry, because the subscriber count was a snapshot taken at creation).
 - `statefulObservableFactory().reset(true)` completes the cached streams for their subscribers (previously it only emptied the cache).
-- `active: false` clears the stream's result cache, so after logout and relogin the loader runs for the new user instead of serving the previous user's cached result. The stream has to be subscribed when the flag flips.
+- `active: false` clears the stream's result cache, so after logout and relogin the loader runs for the new user instead of serving the previous user's cached result. The stream had to be subscribed when the flag flipped (fixed in 0.7.1).
 - The result cache serves falsy results (`0`, `""`, `false`, `null`); previously they called the loader again every time.
 - A loader that returns `null` no longer crashes the stream.
 - A loader or `cacheKey` that throws synchronously produces an error event for that input, and the stream keeps handling later inputs (previously the stream ended).

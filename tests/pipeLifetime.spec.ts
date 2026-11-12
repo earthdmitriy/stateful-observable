@@ -3,7 +3,9 @@ import {
   defer,
   delay,
   map,
+  type Observable,
   of,
+  ReplaySubject,
   share,
   Subject,
   takeUntil,
@@ -93,7 +95,238 @@ describe("pipe(takeUntil(destroy$), shareReplay(1)) releases the source on destr
   });
 });
 
+type Streams = {
+  readonly raw$: Observable<unknown>;
+  readonly value$: Observable<unknown>;
+  readonly error$: Observable<unknown>;
+  readonly pending$: Observable<unknown>;
+  readonly subscribe: (observer: { complete: () => void }) => { unsubscribe: () => void };
+};
+
+const streamNames = ["node", "raw$", "value$", "error$", "pending$"] as const;
+type StreamName = (typeof streamNames)[number];
+
+// subscribes to the node and to every substream, and records which completed
+const watchAll = (node: Streams) => {
+  const completed: Record<StreamName, boolean> = {
+    node: false,
+    raw$: false,
+    value$: false,
+    error$: false,
+    pending$: false,
+  };
+  const mark = (name: StreamName) => ({ complete: () => void (completed[name] = true) });
+  const subs = [
+    node.subscribe(mark("node")),
+    node.raw$.subscribe(mark("raw$")),
+    node.value$.subscribe(mark("value$")),
+    node.error$.subscribe(mark("error$")),
+    node.pending$.subscribe(mark("pending$")),
+  ];
+  return { completed, unsubscribeAll: () => subs.forEach((s) => s.unsubscribe()) };
+};
+
+const allCompleted = (completed: Record<StreamName, boolean>) =>
+  streamNames.every((name) => completed[name]);
+
+describe("destroy completes node, raw$, value$, error$ and pending$", () => {
+  const variants = {
+    "root node": (input: Subject<number>, destroy$: Observable<void>) =>
+      statefulObservable({ input, loader: (v: number) => of(v * 10) }).pipe(
+        takeUntil(destroy$),
+        shareReplay(1),
+      ),
+    "pipeValue child": (input: Subject<number>, destroy$: Observable<void>) =>
+      statefulObservable({ input, loader: (v: number) => of(v * 10) })
+        .pipeValue(map((v: number) => v + 1))
+        .pipe(takeUntil(destroy$), shareReplay(1)),
+    "pipe child": (input: Subject<number>, destroy$: Observable<void>) =>
+      statefulObservable({ input, loader: (v: number) => of(v * 10) })
+        .pipe(map((v) => v))
+        .pipe(takeUntil(destroy$), shareReplay(1)),
+    "pipeError child": (input: Subject<number>, destroy$: Observable<void>) =>
+      statefulObservable({ input, loader: (v: number) => of(v * 10) })
+        .pipeError(map((e) => e))
+        .pipe(takeUntil(destroy$), shareReplay(1)),
+    "async loader": (input: Subject<number>, destroy$: Observable<void>) =>
+      statefulObservable({
+        input,
+        loader: (v: number) => of(v * 10).pipe(delay(5)),
+      }).pipe(takeUntil(destroy$), shareReplay(1)),
+  };
+
+  describe.each(Object.entries(variants))("%s", (_, build) => {
+    it("every substream completes while subscribed, and the source is released", () => {
+      const input = new Subject<number>();
+      const destroy$ = new Subject<void>();
+      const { completed } = watchAll(build(input, destroy$));
+      input.next(1);
+      expect(allCompleted(completed)).toBe(false);
+
+      destroy$.next();
+      expect(completed).toEqual({
+        node: true,
+        raw$: true,
+        value$: true,
+        error$: true,
+        pending$: true,
+      });
+      expect(input.observed).toBe(false);
+    });
+
+    it("every substream completes with an error state as the latest event", () => {
+      const input = new Subject<number>();
+      const destroy$ = new Subject<void>();
+      const node = statefulObservable({
+        input,
+        loader: (v: number) => (v === 1 ? throwError(() => "failed") : of(v)),
+      }).pipe(takeUntil(destroy$), shareReplay(1));
+      const { completed } = watchAll(node);
+      input.next(1);
+
+      destroy$.next();
+      expect(allCompleted(completed)).toBe(true);
+      expect(input.observed).toBe(false);
+    });
+
+    it("substreams subscribed after destroy complete at once and do not reconnect", () => {
+      const input = new Subject<number>();
+      const destroy$ = new Subject<void>();
+      const node = build(input, destroy$);
+      const first = watchAll(node);
+      input.next(1);
+      destroy$.next();
+      expect(allCompleted(first.completed)).toBe(true);
+      expect(input.observed).toBe(false);
+
+      const late = watchAll(node);
+      expect(allCompleted(late.completed)).toBe(true);
+      expect(input.observed).toBe(false);
+    });
+
+    it("destroy fired before anyone subscribed: substreams complete and the source is never held", () => {
+      const input = new Subject<number>();
+      const destroy$ = new ReplaySubject<void>(1);
+      destroy$.next();
+      const { completed } = watchAll(build(input, destroy$));
+
+      expect(allCompleted(completed)).toBe(true);
+      expect(input.observed).toBe(false);
+    });
+
+    it("destroy fires once more after completion: nothing changes", () => {
+      const input = new Subject<number>();
+      const destroy$ = new Subject<void>();
+      const { completed } = watchAll(build(input, destroy$));
+      input.next(1);
+      destroy$.next();
+      destroy$.next();
+      expect(allCompleted(completed)).toBe(true);
+      expect(input.observed).toBe(false);
+    });
+  });
+
+  it("a shared parent stays alive for its other consumers when a child is destroyed", () => {
+    const input = new Subject<number>();
+    const destroy$ = new Subject<void>();
+    const parent = statefulObservable({ input, loader: (v: number) => of(v) });
+    const child = parent
+      .pipeValue(map((v: number) => v + 1))
+      .pipe(takeUntil(destroy$), shareReplay(1));
+
+    const childWatch = watchAll(child);
+    const parentWatch = watchAll(parent);
+    input.next(1);
+
+    destroy$.next();
+    expect(allCompleted(childWatch.completed)).toBe(true);
+    expect(allCompleted(parentWatch.completed)).toBe(false);
+    expect(input.observed).toBe(true);
+
+    parentWatch.unsubscribeAll();
+    expect(input.observed).toBe(false);
+  });
+
+  it("a destroyed child does not stop a sibling built on the same parent", () => {
+    const input = new Subject<number>();
+    const destroyA$ = new Subject<void>();
+    const destroyB$ = new Subject<void>();
+    const parent = statefulObservable({ input, loader: (v: number) => of(v) });
+    const a = parent.pipe(takeUntil(destroyA$), shareReplay(1));
+    const b = parent.pipe(takeUntil(destroyB$), shareReplay(1));
+
+    const watchA = watchAll(a);
+    const watchB = watchAll(b);
+    input.next(1);
+
+    destroyA$.next();
+    expect(allCompleted(watchA.completed)).toBe(true);
+    expect(allCompleted(watchB.completed)).toBe(false);
+    expect(input.observed).toBe(true);
+
+    destroyB$.next();
+    expect(allCompleted(watchB.completed)).toBe(true);
+    expect(input.observed).toBe(false);
+  });
+
+  it("a chain of piped nodes each destroyed by its own signal releases the root", () => {
+    const input = new Subject<number>();
+    const destroyInner$ = new Subject<void>();
+    const destroyOuter$ = new Subject<void>();
+    const inner = statefulObservable({ input, loader: (v: number) => of(v) }).pipe(
+      takeUntil(destroyInner$),
+      shareReplay(1),
+    );
+    const outer = inner
+      .pipeValue(map((v: number) => v * 2))
+      .pipe(takeUntil(destroyOuter$), shareReplay(1));
+
+    const watchOuter = watchAll(outer);
+    input.next(1);
+
+    destroyInner$.next(); // the inner node completes, and so does what is built on it
+    expect(allCompleted(watchOuter.completed)).toBe(true);
+    expect(input.observed).toBe(false);
+  });
+
+  it("a subscriber that unsubscribes before destroy never sees completion, the source is still released", () => {
+    const input = new Subject<number>();
+    const destroy$ = new Subject<void>();
+    const node = statefulObservable({ input, loader: (v: number) => of(v) }).pipe(
+      takeUntil(destroy$),
+      shareReplay(1),
+    );
+    const { completed, unsubscribeAll } = watchAll(node);
+    input.next(1);
+
+    unsubscribeAll();
+    expect(allCompleted(completed)).toBe(false);
+    expect(input.observed).toBe(true); // shareReplay(1) still holds it
+
+    destroy$.next();
+    expect(input.observed).toBe(false);
+    expect(allCompleted(completed)).toBe(false); // already gone, nothing to notify
+  });
+});
+
 describe("pipe lifetime follows the operators inside it", () => {
+  it("two subscribers of a piped node both get every event, and the source is released when both leave", () => {
+    const input = new Subject<number>();
+    const node = statefulObservable({ input }).pipeValue(map((v: number) => v * 10));
+    const first: number[] = [];
+    const second: number[] = [];
+    const a = node.subscribe((v) => first.push(v));
+    input.next(1);
+    const b = node.subscribe((v) => second.push(v));
+    input.next(2);
+    a.unsubscribe();
+    input.next(3);
+    expect(first).toEqual([10, 20]);
+    expect(second).toEqual([10, 20, 30]);
+    b.unsubscribe();
+    expect(input.observed).toBe(false);
+  });
+
   it("plain operators release the node when the last subscriber leaves", () => {
     const { calls, loader } = countingSource();
     const stream = statefulObservable({ loader }).pipeValue(map((v: number) => v * 10));
@@ -180,6 +413,20 @@ describe("pipe lifetime follows the operators inside it", () => {
     expect(isLoading(seen[seen.length - 1])).toBe(true);
     await wait(30);
     expect(seen[seen.length - 1]).toBe(20);
+    again.unsubscribe();
+  });
+  it("a subscriber returning while the kept load is in flight sees loading at once", async () => {
+    const stream = statefulObservable({
+      loader: () => of(1).pipe(delay(20)),
+    }).pipe(shareReplay(1));
+
+    stream.raw$.subscribe().unsubscribe(); // the load goes on, held by shareReplay
+    const seen: unknown[] = [];
+    const again = stream.raw$.subscribe((e) => seen.push(e));
+    expect(seen.length).toBe(1);
+    expect(isLoading(seen[0])).toBe(true);
+    await wait(30);
+    expect(seen).toEqual([seen[0], 1]);
     again.unsubscribe();
   });
 });

@@ -11,7 +11,7 @@ These helpers are not crucial. Everything here can be written by hand on top of 
 
 The samples use Angular for context (`inject`, services), but the library itself only depends on RxJS. The behaviour marked "observed" was checked with throwaway probes against the current code, which were deleted afterwards, so the numbers cannot be reproduced from the repository; the rest is read from the source. Where something behaves in a way that may surprise you, it says so.
 
-**Version.** This guide describes 0.7.0. Behaviour marked *(since 0.7.0)* differs in 0.6.0 and earlier, and each such place says how.
+**Version.** This guide describes 0.8.0. Behaviour marked *(since 0.7.0)* differs in 0.6.0 and earlier, and *(since 0.7.1)* differs in 0.7.0; each such place says how.
 
 ## 1. Result cache (`cacheKey`, `cacheSize`)
 
@@ -106,7 +106,6 @@ export class CustomersLookup {
   private readonly byId = statefulObservableFactory({
     loader: (id: number) => this.api.customer(id),
     cacheSize: 200,   // how many customers to keep; default 42
-    refCount: false,  // keep a loaded customer when no cell shows it (see below)
   });
 
   customer(id: number) {
@@ -141,8 +140,8 @@ What this gives (observed with 100 rows over 5 distinct ids):
 | --- | --- |
 | `get(id)` for rows that nobody renders | no request (the stream is lazy) |
 | 100 cells rendered, 5 distinct ids | 5 requests, one per id, however many cells show it |
-| Page changes and the same ids come back (`refCount: false`) | no new requests, served from the kept stream |
-| Page changes and the same ids come back (default `refCount`) | a request again, because the stream was released when the last cell left |
+| Page changes and the same ids come back | no new requests for the ids that had loaded, served synchronously, without loading *(since 0.8.0; in 0.7.x with the default `refCount` a request again)* |
+| Page changes before some ids have loaded | those requests are cancelled, and the ids load again when they come back |
 | One id fails | only the cells with that id show an error; the other cells are unaffected |
 | `get(id).reload()` for the failed id | one request; every cell with that id recovers |
 
@@ -150,11 +149,12 @@ Each cell has its own pending and error state through the same stateful handle, 
 
 Details worth knowing:
 
-- **There is still one request per distinct id.** The factory deduplicates and caches; it does not batch. If the backend has a bulk endpoint ("customers by ids"), one request for the page is cheaper than many single ones, and batching has to be composed in the loader yourself (for example by collecting ids over a short time window with RxJS).
-- **`refCount` decides whether an id is fetched again.** With the default `refCount: true`, a stream is released when its last cell unsubscribes, and the next cell fetches again. With `refCount: false` the loaded value is kept for as long as the entry stays in the factory. `cacheSize` bounds that: entries beyond it are evicted, least recently used first, skipping entries that still have consumers.
+- **There is still one request per distinct id.** The factory deduplicates and caches; it does not batch. If the backend has a bulk endpoint ("customers by ids"), use `statefulObservableBatchFactory` *(since 0.8.0)*: the same API, with a loader that takes the ids requested within a short window and returns a list of entities.
+- **A loaded id is kept, a loading one is cancelled** *(since 0.8.0)*. An entry keeps the value of its last load that completed and serves it to the next cell without a request. With the default `refCount: true` a load still in flight is cancelled when the last cell leaves (a microtask later, so a request that completes in the same callback still counts). Errors are not kept. A kept value is dropped by `reload()`, by `active: false` and when the entry leaves the factory. See the [ADR](./adr.md#keep-settled-values-in-factory-entries).
+- **`refCount: false` keeps the loader connected.** A load in flight runs to the end with nobody watching, and a streaming loader keeps emitting; use it for live streams, prefetching, or work that must finish. Either way `cacheSize` bounds the entries: entries beyond it are evicted, least recently used first, skipping entries that still have consumers. An evicted or reset entry is ended: its loader and `active` are unsubscribed *(since 0.8.0)*.
 - **Eviction skips entries that have consumers** *(since 0.7.0; in 0.6.0 a stream still on screen can be evicted, and the next `get` for its id creates a second instance with its own request, which the factory's `reload()` does not reach)*. A stream in use is never duplicated by eviction; while more than `cacheSize` entries are in use, the cache holds them all and shrinks back as consumers leave. A new entry is also kept for one tick (until the next microtask), so a burst of `get` calls in one render pass cannot evict an entry before its cell subscribes. An entry that is never subscribed becomes evictable after that tick.
 - **Staleness is yours to manage.** There is no expiry, so a kept customer stays until it is evicted, reset or reloaded. `reload()` on the factory reloads every cached entry, which is a lot after a long list; reload single ids with `get(id).reload()` when only some changed.
-- **Two different caches.** The result cache (`cacheKey` inside `statefulObservable`) stores the responses of one stream for different inputs. The factory stores whole streams, one per key. Use the first for one stream whose input changes (a form), the second for many streams addressed by key (the entities a list refers to).
+- **Two different caches.** The result cache (`cacheKey` inside `statefulObservable`) stores the responses of one stream for different inputs. The factory stores whole streams, one per key (`get`), and `project` follows an input stream over those same entries. Use the first for one stream whose input changes (a form), the second for many streams addressed by key (the entities a list refers to).
 - **The key defaults to the input itself, encoded as JSON** *(since 0.7.0; in 0.6.0 it is joined as a string, so every object input becomes `"[object Object]"` and all of them share one stream)*. An object input is keyed by its content, so equal objects built separately share a stream and different ones do not. Field order matters (`{ a, b }` and `{ b, a }` are different keys), so for objects a `cacheKey: (input) => [input.id]` is still the safer choice.
 
 The API:
@@ -162,9 +162,48 @@ The API:
 | Member | Does |
 | --- | --- |
 | `get(input)` | returns the stream for that key, creating it on first use; the same key returns the same instance |
-| `reload()` | calls `reload()` on every cached stream |
+| `project(input$, { key?, combine? })` | a stream that follows an input observable and shows, for each emitted value, the same entry `get(value)` returns; `key` and `combine(response, value)` work as for `projectMany` *(since 0.8.0)* |
+| `projectMany(ids$, { key?, combine? })` | a stream that follows an observable of lists and shows the entries of each list combined, as `Response[]` in input order or as `combine(responses, items)` *(since 0.8.0)* |
+| `reload()` | calls `reload()` on every cached stream; streams made with `project` show these entries, so they reload with them |
 | `reset(true)` | completes all cached streams (their subscribers receive `complete`) and empties the cache, so the next `get` creates a new instance for every key *(since 0.7.0; in 0.6.0 it only empties the cache, and subscribers are not completed)* |
-| `reset(false)` | drops only entries that have no subscribers; an entry with a live subscriber is kept *(since 0.7.0; in 0.6.0 it drops every entry)*. Consumers are counted, not source subscriptions, so this also works with `refCount: false` |
+| `reset(false)` | drops only entries that have no subscribers; an entry with a live subscriber is kept *(since 0.7.0; in 0.6.0 it drops every entry)*. Consumers are counted, not source subscriptions, so this also works with `refCount: false`. A stream made with `project` that shows an entry counts as its consumer |
+
+### Another use: an input stream over the factory's entries
+
+*(since 0.8.0)* `project(input$)` is for a key that changes over time (a selected id, a search query) and should be backed by the same entries as `get`. Each value the input emits is keyed with the factory's `cacheKey` and resolved to `get(value)`, so a projection and a `get` of the same key show **one entry**: one request, one state.
+
+```typescript
+@Injectable({ providedIn: "root" })
+export class SearchService {
+  private readonly search = statefulObservableFactory({
+    loader: (query: string) => this.api.search(query),
+    cacheSize: 100, // a loaded query is kept while it is in the factory
+  });
+
+  // each component makes its own projection; a query shown by one is the same entry for the others
+  results(query$: Observable<string>) {
+    return this.search.project(query$);
+  }
+}
+```
+
+```typescript
+const a = factory.project(new BehaviorSubject("x"));
+const b = factory.project(new BehaviorSubject("x"));
+const c = factory.get("x");
+
+// one request for "x"; reload() on a, b or c reloads the entry, and all three show the new value
+a.reload();
+```
+
+- **Projections are separate streams, entries are shared.** `a !== b`, because a projection follows its input and can move to another key later, which one object could not do for two inputs. What is shared is the entry behind them. `get(x) === get(x)` as before.
+- **`reload()` on a projection** reloads the entry it currently shows, and so reaches every other reference to that entry. Before the input has emitted it does nothing.
+- **How long a key is kept follows the entry**, as for `get`: a key that has loaded is served again without a request while it stays in the factory (`cacheSize`). Switching a projection to another key releases the previous entry, which cancels its load if it was still in flight (with the default `refCount: true`).
+- **A repeated key that is still kept** is served synchronously, with no loading event.
+- **The key of an input is encoded like for `get`.** An empty `cacheKey` array is a key like any other here (all such inputs share one entry), unlike on `statefulObservable`, where it skips caching.
+- **`factory.reload()` and `factory.reset()`** act on the entries, so projections reload, or release, with them. `reset(true)` also completes the streams made with `project`.
+- **`active` and `mapOperator`** of the factory apply: `active` through the entries, `mapOperator` for switching between them (default `switchMap`).
+- **Errors** of one input (a failed load, or a throwing `cacheKey`) become an error event for that input, and the projection keeps following its input. Subscribing to `error$` on the projection silences the unhandled-error log of the entry it shows.
 
 ### Another use: a list of ids to one combined stream
 
@@ -178,11 +217,9 @@ export class ProductsService {
     cacheSize: 100,
   });
 
-  products(ids: number[]) {
-    return combineStatefulObservables(
-      ids.map((id) => this.byId.get(id)),
-      (products) => products,   // Product[] in the same order as ids
-    );
+  // Product[] in the same order as the ids, following the ids as they change
+  products(ids$: Observable<readonly number[]>) {
+    return this.byId.projectMany(ids$);
   }
 
   onLogout() {
@@ -191,9 +228,42 @@ export class ProductsService {
 }
 ```
 
-The combined stream is pending while any product loads, reports errors per source, and `reload({ onlyFailed: true })` on it retries only the failed products *(since 0.7.0; in 0.6.0 `reload()` reloads every product)*. Here the list is the consumer, not each cell, so one handle covers the whole aggregate.
+*(since 0.8.0)* `projectMany(ids$)` resolves every list the input emits to the entries of `get` and combines them as `combineStatefulObservables` does. The list is the consumer, not each cell, so one handle covers the whole aggregate.
 
-Unlike `get`, `products(ids)` builds a new combined stream on every call. Call it once per list of ids (in a field, or when the ids change), not from a template expression, which would create a new stream on every change detection.
+- **State follows the combination's rules.** The stream is pending while any product loads, so a list that gains one id shows loading until that id arrives, and the error is a list of `error | false`, one per id. `reload({ onlyFailed: true })` retries only the failed products, and `reload({ path: [i] })` the product at position `i`.
+- **Entries are shared.** Duplicates in a list and the same id shown through `get` or `project` are one entry and one request. With `statefulObservableBatchFactory` the ids of a list go out in one batch.
+- **Changing the list keeps what stays.** The entries of a new list are subscribed before the previous ones are released, so an id in both lists keeps its load in flight: no second request, and no second batch. Ids that left the list are released as for `get`: a load in flight is cancelled, a loaded value is kept.
+- **An equal list is skipped.** A list with the same keys in the same order emits nothing new; a reordered one emits the new order.
+- **An empty list** emits `[]` at once, without loading.
+- **`mapOperator` is not used;** switching lists always works as described above.
+
+#### Lists of records: `key` and `combine`
+
+Both options are optional. When the items are records rather than inputs, `key` selects the input of an item (and is then required by the types). `combine(responses, items)` computes the value from the responses and the list they were loaded for:
+
+```typescript
+export class CartTotalComponent {
+  public readonly lines = input.required<CartLine[]>();
+  private readonly prices = inject(CURRENT_PRICE); // a factory by sku
+
+  protected readonly total = this.prices.projectMany(toObservable(this.lines), {
+    key: (line) => line.sku,
+    combine: (prices, lines) =>
+      lines.reduce((sum, line, i) => sum + line.qty * prices[i].price, 0),
+  });
+}
+```
+
+Combining the prices with `lines$` afterwards (`combineLatest`, `withLatestFrom`) would read the same source through two paths, one of them async: when the skus change, one path has the new lines while the other still has the old prices, and for a moment the total mixes them. Here `combine` only sees responses together with the list they were loaded for:
+
+- **Other keys** (a sku added, removed or moved): the new list is loaded as above and shows loading until its entries arrive, never a value made of the previous list's responses.
+- **Same keys, other items** (only `qty` changed): nothing loads and there is no loading state; `combine` runs again with the new items and the responses it already has.
+- **A throw in `combine`** is an error event; the next list recovers from it.
+- **An empty list** calls `combine([], items)`.
+
+`project(value$, { key, combine })` does the same for one value: `combine(response, value)`, no request and no loading when only the data outside the key changes, and loading when the key changes.
+
+Before 0.8.0 this was `combineStatefulObservables(ids.map((id) => byId.get(id)), (products) => products)`. That still works for a fixed list, but it builds a new combined stream on every call, so it has to be called once per list of ids (in a field, or when the ids change), not from a template expression.
 
 ## 3. Connection (`statefulConnection`)
 
@@ -332,7 +402,7 @@ Details worth knowing:
 - **The input has to replay.** While inactive, the input is not subscribed. On reactivation it is subscribed again, so a `BehaviorSubject`, `toObservable(signal)` or a form's `valueChanges` with `startWith` triggers the load, while a plain `Subject` does not replay its last value and nothing loads until its next emission.
 - **Inactive does not emit on `value$`, `pending$` or `error$`.** They stay silent for it, so a view bound to `value$ | async` that is still mounted keeps showing its last value. For a logout this normally does not matter, in the author's experience, because the logged-out state is a different layout with different templates, so the user-bound views are gone anyway. It can even be what you want when `active` is switched off temporarily (for example while a token is being renewed): the screen does not flicker or empty. When a view does need to react, use `subscribe({ active })` or filter `raw$` with `isInactive`.
 - **Going inactive clears the stream's result cache** *(since 0.7.0; in 0.6.0 the result cache survives going inactive, so after relogin a cached key can serve the previous user's result)*. If the stream uses `cacheKey`, results cached for the previous user are dropped when `active` emits `false`, so after relogin the loader runs for the new user. Going inactive itself does not cause a request. Observed: logging out and back in as another user with `cacheKey: (id) => [id]` calls the loader again and delivers the new user's value. Derived and combined streams are covered through their sources.
-- **The stream has to be subscribed when the flag flips.** The cache is cleared by the stream's own `active` handling, which only runs while something is subscribed. If every subscriber has left before logout, nothing is listening: observed, a stream that was unsubscribed during logout and relogin served the first user's cached value to the next subscriber. This is why `active` is designed for streams whose subscribers stay in place. For streams that can have no subscribers at that moment, add the user to the key (`cacheKey: (id) => [userId, id]`) or call `reload()` on the stream in the logout handler: with nobody subscribed it only empties the cache and fetches nothing.
+- **It works with no subscribers too** *(since 0.7.1; in 0.7.0 a stream with `cacheKey` and `refCount: true` that nobody read during logout and relogin served the previous user's cached value to the next subscriber)*. While a stream with `active` and `cacheKey` has no subscribers, it watches `active` until the first `false`, drops its result cache then and stops watching; a subscriber that returns takes over. While logged in, the cache survives unsubscribing and subscribing again, so a collapsed section that is expanded again is still served from it.
 - **It does not clear anything outside the stream.** Data that was already copied into component state, a signal, a form or a `localStorage` entry is not touched.
 
 ## See also

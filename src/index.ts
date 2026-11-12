@@ -1,3 +1,4 @@
+export { statefulObservableBatchFactory } from "./batchFactory";
 export { combineStatefulObservables } from "./combineStatefulObservables";
 export { statefulObservableFactory } from "./factory";
 export {
@@ -20,4 +21,7 @@ export {
   ResponseWithStatus,
   ResponseDto,
   StatefulObservable,
+  StatefulObservableFactory,
+  ProjectCombine,
+  ProjectManyCombine,
 } from "./types";

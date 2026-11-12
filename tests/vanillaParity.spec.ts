@@ -4,6 +4,7 @@
 // own block and assert the difference explicitly.
 import {
   auditTime,
+  combineLatest,
   bufferCount,
   concatMap,
   concatWith,
@@ -34,6 +35,7 @@ import {
   range,
   reduce,
   scan,
+  share,
   shareReplay,
   skip,
   startWith,
@@ -46,6 +48,7 @@ import {
   withLatestFrom,
 } from "rxjs";
 import { TestScheduler } from "rxjs/testing";
+import { combineStatefulObservables } from "../src/combineStatefulObservables";
 import { statefulObservable } from "../src/statefulObservable";
 
 const scheduler = () =>
@@ -269,5 +272,123 @@ describe("differs from vanilla RxJS by design", () => {
       const stateful = statefulObservable({ input: source, loader: load }).pipeValue(slow).value$;
       expectObservable(valuesOnly(stateful)).toBe("----a-b", { a: 10, b: 20 });
     });
+  });
+});
+
+// Combinations: combineStatefulObservables against combineLatest over the same
+// branches. Vanilla branches of one input share it, like pipes of one root.
+const sum = ([x, y]: readonly [number, number]) => x + y;
+const times = (k: number) => map((v: number) => v * k);
+const slowTimes = (k: number, ms: number) => switchMap((v: number) => timer(ms).pipe(map(() => v * k)));
+
+describe("combineStatefulObservables matches vanilla combineLatest", () => {
+  it("independent synchronous sources", () => {
+    scheduler().run(({ cold, expectObservable }) => {
+      const a = cold("a-b---c|", values);
+      const b = cold("-d--e|", values);
+      const vanilla = combineLatest([a, b]).pipe(map(sum));
+      const stateful = combineStatefulObservables(
+        [statefulObservable(a), statefulObservable(b)],
+        sum,
+      ).value$;
+      expectObservable(valuesOnly(stateful)).toEqual(valuesOnly(vanilla));
+    });
+  });
+
+  it("independent asynchronous sources that do not overlap", () => {
+    scheduler().run(({ cold, expectObservable }) => {
+      // a's second result lands at frame 8, b's second load starts at frame 10
+      const a = cold("a----b---|", values);
+      const b = cold("c---------d|", values);
+      const vanilla = combineLatest([a.pipe(slowTimes(10, 3)), b.pipe(slowTimes(100, 1))]).pipe(map(sum));
+      const stateful = combineStatefulObservables(
+        [statefulObservable(a).pipeValue(slowTimes(10, 3)), statefulObservable(b).pipeValue(slowTimes(100, 1))],
+        sum,
+      ).value$;
+      expectObservable(valuesOnly(stateful)).toEqual(valuesOnly(vanilla));
+    });
+  });
+
+  it("one input feeding two synchronous branches: both emit on every source change", () => {
+    scheduler().run(({ cold, expectObservable }) => {
+      const source = cold("a-b|", values);
+      const shared = source.pipe(share());
+      const vanilla = combineLatest([shared.pipe(times(1000)), shared.pipe(times(100))]).pipe(map(sum));
+      const root = statefulObservable(source);
+      const stateful = combineStatefulObservables(
+        [root.pipeValue(times(1000)), root.pipeValue(times(100))],
+        sum,
+      ).value$;
+      // 2100 = new 2000 + old 100: combineLatest emits on every source change
+      const expected = { x: 1100, m: 2100, y: 2200 };
+      expectObservable(valuesOnly(vanilla)).toBe("x-(my)", expected);
+      expectObservable(valuesOnly(stateful)).toBe("x-(my)", expected);
+    });
+  });
+});
+
+describe("combineStatefulObservables differs from vanilla combineLatest by design", () => {
+  it("one input feeding two asynchronous branches: vanilla emits a mix, the combination waits for both", () => {
+    scheduler().run(({ cold, expectObservable }) => {
+      const source = cold("a-----b|", values);
+      const shared = source.pipe(share());
+      const fast = slowTimes(1000, 1);
+      const slow = slowTimes(100, 3);
+      const vanilla = combineLatest([shared.pipe(fast), shared.pipe(slow)]).pipe(map(sum));
+      const root = statefulObservable(source);
+      const stateful = combineStatefulObservables([root.pipeValue(fast), root.pipeValue(slow)], sum).value$;
+      // frame 7: new a (2000) + old b (100)
+      expectObservable(valuesOnly(vanilla)).toBe("---x---m-y", { x: 1100, m: 2100, y: 2200 });
+      // the slow branch is pending at frame 7, so nothing is emitted until both settle
+      expectObservable(valuesOnly(stateful)).toBe("---x-----y", { x: 1100, y: 2200 });
+    });
+  });
+
+  it("independent asynchronous sources: a result that lands while another source loads is not combined with that source's old value", () => {
+    scheduler().run(({ cold, expectObservable }) => {
+      // a's second result lands at frame 8, the frame b's second load starts
+      const a = cold("a----b---|", values);
+      const b = cold("c-------d|", values);
+      const vanilla = combineLatest([a.pipe(slowTimes(10, 3)), b.pipe(slowTimes(100, 1))]).pipe(map(sum));
+      const stateful = combineStatefulObservables(
+        [statefulObservable(a).pipeValue(slowTimes(10, 3)), statefulObservable(b).pipeValue(slowTimes(100, 1))],
+        sum,
+      ).value$;
+      // frame 8: new a (20) + old b (300), although b is already loading
+      expectObservable(valuesOnly(vanilla)).toBe("---x----mz", { x: 310, m: 320, z: 420 });
+      expectObservable(valuesOnly(stateful)).toBe("---x-----z", { x: 310, z: 420 });
+    });
+  });
+
+  it("an error ends vanilla combineLatest, but the combination reports it and recovers", () => {
+    const failOnTwo = map((v: number) => {
+      if (v === 2) throw "boom";
+      return v;
+    });
+    scheduler().run(({ cold, expectObservable }) => {
+      const a = cold("a-b-c|", values);
+      const b = cold("d|", values);
+      const vanilla = combineLatest([a.pipe(failOnTwo), b]).pipe(map(sum));
+      expectObservable(vanilla).toBe("x-#", { x: 5 }, "boom");
+      const combined = combineStatefulObservables(
+        [statefulObservable(a).pipeValue(failOnTwo), statefulObservable(b)],
+        sum,
+      );
+      expectObservable(valuesOnly(combined.value$)).toBe("x---y", { x: 5, y: 7 });
+      expectObservable(valuesOnly(combined.error$)).toBe("f-e-f", { f: false, e: ["boom", false] });
+    });
+  });
+
+  it("reload() of synchronous sources reloads them one after another, so it emits the mix", () => {
+    let loadsA = 0;
+    let loadsB = 0;
+    const a = statefulObservable({ loader: () => of(++loadsA * 1000) });
+    const b = statefulObservable({ loader: () => of(++loadsB * 100) });
+    const combined = combineStatefulObservables([a, b], sum);
+    const emitted: number[] = [];
+    combined.value$.subscribe((v) => emitted.push(v));
+    combined.reload();
+    // 2100 = new a + old b; vanilla combineLatest has no reload to compare with
+    expect(emitted).toEqual([1100, 2100, 2200]);
   });
 });

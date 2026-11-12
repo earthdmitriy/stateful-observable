@@ -1,5 +1,5 @@
-import { filter, map, Observable, tap } from "rxjs";
-import { defaultCache, pipeError, pipeRaw, pipeValue } from "./operators";
+import { filter, map, Observable, shareReplay, tap } from "rxjs";
+import { pipeError, pipeRaw, pipeValue } from "./operators";
 import {
   isError,
   isInactive,
@@ -73,7 +73,10 @@ export const fillStatefulObservable = <Result, Error, Meta = undefined>({
         }
       });
 
-  const shared$ = raw.pipe(sideEffect, defaultCache(refCount));
+  const shared$ = raw.pipe(
+    sideEffect,
+    shareReplay({ bufferSize: 1, refCount }),
+  );
   const cachedRaw$ = trackConsumers
     ? shared$.pipe(
         tap({
@@ -100,6 +103,22 @@ export const fillStatefulObservable = <Result, Error, Meta = undefined>({
     }
     reload(options);
   };
+
+  // a node made from this one: same meta list, index and reload
+  // (`with` passes its options to rename it or replace its meta)
+  const derive = <R, E>(
+    derivedRaw: Observable<ResponseWithStatus<R, E>>,
+    options: { name?: string; meta?: Meta } = {},
+  ) =>
+    fillStatefulObservable<R, E, Meta>({
+      raw: derivedRaw,
+      name: options.name ?? name,
+      meta: "meta" in options ? options.meta : meta,
+      internalMeta,
+      index,
+      reload: checkedReload,
+      refCount,
+    });
 
   const subscribe = makeSubscribe(cachedRaw$);
 
@@ -130,48 +149,13 @@ export const fillStatefulObservable = <Result, Error, Meta = undefined>({
     ),
 
     pipe: (...args: Parameters<PipeRawOperator>) =>
-      fillStatefulObservable({
-        raw: cachedRaw$.pipe(pipeRaw(...args)),
-        name,
-        meta,
-        internalMeta,
-        index,
-        reload: checkedReload,
-        refCount,
-      }),
-
+      derive(cachedRaw$.pipe(pipeRaw(...args))),
     pipeValue: (...args: Parameters<PipeValueOperator>) =>
-      fillStatefulObservable({
-        raw: cachedRaw$.pipe(pipeValue(...args)),
-        name,
-        meta,
-        internalMeta,
-        index,
-        reload: checkedReload,
-        refCount,
-      }),
-
+      derive(cachedRaw$.pipe(pipeValue(...args))),
     pipeError: (...args: Parameters<PipeErrorOperator>) =>
-      fillStatefulObservable({
-        raw: cachedRaw$.pipe(pipeError(...args)),
-        name,
-        meta,
-        internalMeta,
-        index,
-        reload: checkedReload,
-        refCount,
-      }),
-
+      derive(cachedRaw$.pipe(pipeError(...args))),
     with: (options: { name?: string; meta?: Meta }) =>
-      fillStatefulObservable({
-        raw: cachedRaw$,
-        name: options.name ?? name,
-        meta: "meta" in options ? options.meta : meta,
-        internalMeta,
-        index,
-        reload: checkedReload,
-        refCount,
-      }),
+      derive(cachedRaw$, options),
 
     subscribe,
     [observable]: () => ({

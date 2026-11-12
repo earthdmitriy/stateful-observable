@@ -1,5 +1,8 @@
 import {
   distinctUntilChanged,
+  filter,
+  last,
+  of,
   map,
   mergeMap,
   Observable,
@@ -119,5 +122,37 @@ describe("pipes keep operator state and isolate failures", () => {
       return event;
     });
     expect(await run(pipeRaw(failOnTwo), [1, 2, 3])).toEqual(["1", "E(raw boom)", "3"]);
+  });
+});
+
+describe("a pipeline that errors on completion", () => {
+  // `last()` errors when its source completes empty; a rebuilt pipeline would
+  // get a completed feed and error again, without end
+  const failOnComplete = () => pipeValue(filter(() => false), last());
+
+  const record = (source: Observable<Raw>) => {
+    const out: string[] = [];
+    let completed = false;
+    source.pipe(failOnComplete()).subscribe({
+      next: (event) => out.push(show(event)),
+      complete: () => (completed = true),
+    });
+    return { out, isCompleted: () => completed };
+  };
+
+  it("reports the error once and completes, with a source that completes synchronously", () => {
+    const { out, isCompleted } = record(of<Raw>(1));
+    expect(out).toEqual(["L", "E(EmptyError: no elements in sequence)"]);
+    expect(isCompleted()).toBe(true);
+  });
+
+  it("reports the error once and completes, with a source that completes later", () => {
+    const input = new Subject<Raw>();
+    const { out, isCompleted } = record(input);
+    input.next(1);
+    input.complete();
+    expect(out).toEqual(["L", "E(EmptyError: no elements in sequence)"]);
+    expect(isCompleted()).toBe(true);
+    expect(input.observed).toBe(false);
   });
 });

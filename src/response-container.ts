@@ -16,6 +16,18 @@ export const inactiveSymbol: unique symbol = Symbol.for(
   "@rx-evo/stateful-observable/inactive",
 );
 
+/** A new loading event. */
+export const loadingEvent = (): ResponseLoading => ({ state: loadingSymbol });
+/** A new inactive event. */
+export const inactiveEvent = (): ResponseInactive => ({
+  state: inactiveSymbol,
+});
+/** A new error event carrying `error`. */
+export const errorEvent = <E>(error: E): ResponseError<E> => ({
+  state: errorSymbol,
+  error,
+});
+
 export const metaSymbol: unique symbol = Symbol.for(
   "@rx-evo/stateful-observable/meta",
 );
@@ -73,13 +85,13 @@ export const deserializeResponse = <T, E = unknown>(
     throw new TypeError("Invalid ResponseDto");
   }
   if ("inactive" in dto) {
-    return { state: inactiveSymbol };
+    return inactiveEvent();
   }
   if ("pending" in dto) {
-    return { state: loadingSymbol };
+    return loadingEvent();
   }
   if ("error" in dto) {
-    return { state: errorSymbol, error: dto.error };
+    return errorEvent(dto.error);
   }
   if ("value" in dto) {
     return dto.value;

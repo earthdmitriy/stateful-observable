@@ -13,6 +13,7 @@ npm install @rx-evo/stateful-observable
 ```typescript
 import {
   statefulObservable,
+  statefulObservableBatchFactory,
   statefulObservableFactory,
   statefulConnection,
   combineStatefulObservables,
@@ -104,6 +105,8 @@ With skeleton
   } 
 }
 ```
+
+Read data from `stream.value$`, not from `stream | async`: the stream itself also delivers its error events, and the `async` pipe reports each of them to Angular's `ErrorHandler`. Leave errors to `error$` (or to the container below).
 
 Recommended way - stateful container
 ```html
@@ -223,6 +226,25 @@ protected readonly results = statefulObservable(
 
 The input node is synchronous, so a keystroke emits no loading by itself. `pending$` becomes `true` only when the request inside `pipeValue` actually starts. Keep `filter` and `distinctUntilChanged` on the input, as shown: inside `pipeValue` they work too, but a dropped value there means a change was started without a result, so the node stays pending.
 
+### Form projection over shared entries
+
+When several components project their own input through the same loader, a factory can back all of them with the same entries: a query shown by one component is the same entry for the others (one request, and `reload()` reaches all of them). See [QoL](./QoL.md), "Factory", for the details.
+
+```typescript
+@Injectable({ providedIn: "root" })
+export class SearchService {
+  private readonly api = inject(SearchApi);
+  private readonly search = statefulObservableFactory({
+    loader: (query: string) => this.api.search(query),
+    cacheSize: 100, // a loaded query is kept while it is in the factory
+  });
+
+  results(query$: Observable<string>) {
+    return this.search.project(query$);
+  }
+}
+```
+
 ### Shared data in service
 
 ```typescript
@@ -252,6 +274,38 @@ public readonly stream = statefulObservable({
   loader: () => this.productsApi.allProducts$(),
 }).pipe(share({ resetOnRefCountZero: () => timer(60_000) }));
 ```
+
+### Session: dropping user data on logout
+
+Give every source that holds user data `active` from the session. When it turns `false`, every entry of a factory is dropped, kept ones included, and so is the result cache of a stream; nothing else is needed on logout.
+
+```typescript
+export const LOGGED_IN = new InjectionToken<Observable<boolean>>("loggedIn", {
+  providedIn: "root",
+  factory: () => inject(AuthService).loggedIn$, // must replay: a BehaviorSubject or shareReplay(1)
+});
+
+export const ORDERS_BY_CUSTOMER = new InjectionToken("ordersByCustomer", {
+  providedIn: "root",
+  factory: () => {
+    const api = inject(OrdersApi);
+    return statefulObservableFactory({
+      loader: (customerId: number) => api.orders(customerId),
+      active: inject(LOGGED_IN), // logout drops every entry
+    });
+  },
+});
+```
+
+Do not add a logout handler that calls `reset(true)` next to `active`: it does what `active` already does. `reset` is for a factory without `active`. Public data (a catalog, prices) simply has no `active`, so it survives logout.
+
+### Where a source lives
+
+- **A server entity addressed by an id** (a customer, an order, a cart) is a factory in its own `InjectionToken`, one token per entity, as `ORDERS_BY_CUSTOMER` above. Any component can read it, and a write anywhere can reload it, without a shared service that holds everything.
+- **A source keyed by UI state** (a list's query, a search text) is a stateful source of the component that owns that state: `statefulObservable({ input: toObservable(this.query), loader, cacheKey })`.
+- **UI state itself** (the selected item, the open tab or panel, an edit mode) lives in components: ids go down as inputs, events go up as outputs. Do not move it into root tokens with a service that writes them; that is global mutable state with a hand-written dispatcher, and it needs manual resets that destroying the component gives for free. A display preference that must survive navigation (the last open tab) is the exception: one root signal, reset on logout.
+
+How many components read a source today decides nothing: the same kind of data should be held the same way.
 
 ### Combining data from streams
 
@@ -385,6 +439,70 @@ protected submit() {
 
 A save shows the same pending state as a fetch, and the response of the update replaces the value. If you also use `cacheKey`, give update actions a key that cannot hit the cache (or return `[]` for them), otherwise a repeated update is served from the cache.
 
+### Refreshing what a write changed
+
+A write is a stateful stream of its own, and on success it reloads exactly the entries it changed; every view of those entries refreshes, wherever it is.
+
+```typescript
+private readonly calls$ = new Subject<{ orderId: string; lines: Line[]; before: string[] }>();
+private readonly ordersOf = inject(ORDERS_BY_CUSTOMER);
+private readonly stockOf = inject(STOCK_BY_SKU);
+
+protected readonly save = statefulObservable({
+  input: this.calls$,
+  loader: ({ orderId, lines, before }) =>
+    this.api.updateOrder(orderId, lines).pipe(
+      tap((saved) => {
+        this.ordersOf.get(saved.customerId).reload();
+        // a dropped line frees its stock too: the skus before and after the change
+        new Set([...before, ...saved.lines.map((line) => line.sku)]).forEach((sku) =>
+          this.stockOf.get(sku).reload(),
+        );
+      }),
+    ),
+  mapOperator: exhaustMap, // a second click while saving is ignored
+  active: inject(LOGGED_IN), // an answer after logout is dropped
+  refCount: false, // the write finishes even if its panel closes
+});
+```
+
+The reloads are in the loader, so they run with the request, not only while something subscribes to a derived node; the save button reads `save.pending$` and `save.error$`. Name the affected keys in the write, and no more: reloading a whole factory refreshes views the write did not change. A reload of an entry nobody shows now is cheap: it is fetched again when shown.
+
+### Polling the shown entry
+
+Poll from the component that shows the entry, not inside the loader: a timer in the loader keeps polling every key the factory still holds, while a timer in the component stops with it and follows its key.
+
+```typescript
+export class ActivitySectionComponent {
+  public readonly customerId = input.required<number>();
+  private readonly activityOf = inject(ACTIVITY_BY_CUSTOMER);
+  protected readonly activity = this.activityOf.project(toObservable(this.customerId));
+
+  constructor() {
+    toObservable(this.customerId)
+      .pipe(
+        switchMap((id) => timer(20_000, 20_000).pipe(map(() => id))),
+        takeUntilDestroyed(),
+      )
+      .subscribe((id) => this.activityOf.get(id).reload());
+  }
+}
+```
+
+To keep the list on screen when a poll fails, decide it in the template: pass the error to the container only while there is no list to show. If the factory's loader tags each result with its key (`map((entries) => ({ customerId: id, entries }))`), the template can also tell a failed first load of the next key from a failed poll of the shown one:
+
+```html
+@let shown = activity.value$ | async;
+@let list = shown && shown.customerId === customerId() ? shown.entries : null;
+<app-stateful-container
+  [pending]="activity.pending$ | async"
+  [error]="list ? null : (activity.error$ | async)"
+  (reload)="activity.reload()"
+>
+  <app-activity-list [entries]="list" />
+</app-stateful-container>
+```
+
 ### Dynamic combined stream
 
 In case if you need cache entities queried by id
@@ -399,22 +517,72 @@ export class ProductsStreamService {
   // one shared stream per id, bounded, entries in use are never evicted
   private readonly productById = statefulObservableFactory({
     loader: (id: number) => this.productsApi.getProduct$(id),
-    cacheSize: 200,
-    refCount: false, // keep a loaded product when nobody shows it
+    cacheSize: 200, // a loaded product is kept while it is in the factory
   });
 
   public getStreamById(id: number) {
     return this.productById.get(id);
   }
 
-  public getCombinedStreamByIds(ids: number[]) {
-    const streams = ids.map((id) => this.getStreamById(id));
-    return combineStatefulObservables(streams, (products) => products);
+  // Product[] in the order of the ids; an id that stays in the list keeps its load
+  public getCombinedStreamByIds(ids$: Observable<readonly number[]>) {
+    return this.productById.projectMany(ids$);
   }
 }
 ```
 
-`getCombinedStreamByIds` builds a new combined stream on every call, so call it once per list of ids (in a field, or when the ids change), not from a template expression. A hand-written `{ [id]: stream }` map works too, but it has no eviction and no `reset`. See [QoL](./QoL.md), "Factory", for the details.
+`getCombinedStreamByIds` follows the ids as they change, so call it once (in a field), not from a template expression. A hand-written `{ [id]: stream }` map works too, but it has no eviction and no `reset`. See [QoL](./QoL.md), "Factory", for the details.
+
+### Batched requests by id
+
+In case if the backend loads many entities in one request
+
+```typescript
+@Injectable({
+  providedIn: "root",
+})
+export class ProductsStreamService {
+  private readonly productsApi = inject(ProductsApiService);
+
+  // ids requested within 10 ms go to the backend in one request
+  private readonly productById = statefulObservableBatchFactory({
+    loader: (ids: readonly number[]) => this.productsApi.getProducts$(ids),
+    idOf: (product) => product.id,
+    batchTime: 10,
+    maxBatchSize: 100,
+  });
+
+  public getStreamById(id: number) {
+    return this.productById.get(id);
+  }
+}
+```
+
+A list that renders one component per product makes one request for all of them. An id the response leaves out shows an error for that product only. If the backend returns a map of id to entity, turn it into a list in the loader: `map((byId) => Object.values(byId))`.
+
+### Entity of the shown key
+
+A component that shows one entity by an id input projects the token's factory with its own key:
+
+```typescript
+@Component({
+  selector: "app-customer-tier",
+  template: `
+    <app-stateful-container [stream]="tier">
+      {{ tier.value$ | async }}
+    </app-stateful-container>
+  `,
+})
+export class CustomerTierComponent {
+  public readonly customerId = input.required<number>();
+
+  protected readonly tier = inject(TIER_BY_CUSTOMER)
+    .project(toObservable(this.customerId))
+    .pipeValue(map((entry) => entry.tier));
+}
+```
+
+Every component that shows the same id reads the same entry: one request, one state, and `reload()` on any of them reloads it for all. A batch factory works the same way, so a list of rows with one such component each makes one batched request. Use `projectMany` for a list of ids in one stream, and `get(id)` when code outside the view needs the entry (a write that reloads it).
 
 ### Smart cache
 
@@ -432,18 +600,9 @@ export class ProductsStreamService {
     loader: (filters: FiltersObject) => this.productsApi.searchProducts$(filters),
     // the key is encoded as JSON, so equal filter objects share one stream
     cacheKey: (filters) => [filters.status, filters.role, filters.page],
-    active: this.loggedIn$, // inactive while logged out
+    // queries can contain private data: logging out drops every cached query
+    active: this.loggedIn$,
   });
-
-  constructor() {
-    this.loggedIn$
-      .pipe(
-        filter((loggedIn) => !loggedIn),
-        takeUntilDestroyed(),
-      )
-      // drop every cached query on logout, because queries can contain private data
-      .subscribe(() => this.productsByFilters.reset(true));
-  }
 
   public getStream(filters: FiltersObject) {
     return this.productsByFilters

@@ -525,6 +525,13 @@ Or create new issue https://github.com/earthdmitriy/stateful-observable/issues
 
 ## Changelog
 
+0.8.0
+- factory: `project(input$)` follows an input stream and shows, for each emitted value, the same entry `get(value)` returns, so projections and `get` of one key share one request and `reload()` reaches all of them
+- factory: `projectMany(ids$)` follows a stream of id lists and shows their entries combined (`Response[]` in input order); an id that stays in the list keeps its load in flight; optional `key` projects lists of records and `combine(responses, items)` computes the value from the list the responses were loaded for
+- factory: an entry keeps a value that has loaded and serves it to a consumer that comes back without a request, while a load still in flight is cancelled when its last consumer leaves (`refCount` now only decides whether the loader stays connected)
+- `statefulObservableBatchFactory({ loader, idOf })`: the same consumer API as the factory, but ids requested within `batchTime` go to the backend in one loader call
+- fix: `active: false` clears the result cache also when the stream has no subscribers at that moment, so a cached result of the previous user is never served after relogin. Affects only streams with `cacheKey` (rare for shared user data) and `refCount: true`
+
 0.7.0
 - `reload({ onlyFailed, where, path })`: reload only the failed sources, the part of the graph whose name or meta matches, or a source by position
 - cache keys are encoded as JSON: no more collisions between `1` and `"1"` or between different object inputs; key parts must be JSON-serializable

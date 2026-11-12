@@ -285,6 +285,91 @@ describe("statefulObservable", () => {
         expect(calls).toEqual(["alice:1", "bob:1"]);
         sub.unsubscribe();
       });
+
+      it("drops the cache when logout happens while nobody is subscribed", async () => {
+        const { active, user, calls, store } = setup();
+        const first = store.subscribe(() => {});
+        await tick();
+        first.unsubscribe();
+
+        active.next(false);
+        await tick();
+        user.name = "bob";
+        active.next(true);
+        await tick();
+
+        const values: string[] = [];
+        const second = store.subscribe((v) => values.push(v));
+        await tick();
+
+        expect(values).toEqual(["bob:1"]);
+        expect(calls).toEqual(["alice:1", "bob:1"]);
+        second.unsubscribe();
+      });
+
+      it("keeps the cache across resubscription while still logged in", async () => {
+        const { calls, store } = setup();
+        const first = store.subscribe(() => {});
+        await tick();
+        first.unsubscribe();
+
+        const values: string[] = [];
+        const second = store.subscribe((v) => values.push(v));
+        await tick();
+
+        expect(values).toEqual(["alice:1"]);
+        expect(calls).toEqual(["alice:1"]);
+        second.unsubscribe();
+      });
+
+      it("watches active while idle only until the first logout", async () => {
+        const { active, store } = setup();
+        expect(active.observed).toBe(false);
+
+        const sub = store.subscribe(() => {});
+        await tick();
+        sub.unsubscribe();
+        expect(active.observed).toBe(true); // the idle watch
+
+        active.next(false);
+        expect(active.observed).toBe(false);
+      });
+
+      it("does not watch active while idle without a cacheKey", async () => {
+        const active = new BehaviorSubject(true);
+        const store = statefulObservable({
+          input: new BehaviorSubject(1),
+          loader: (id: number) => of(id),
+          active,
+        });
+        const sub = store.subscribe(() => {});
+        await tick();
+        sub.unsubscribe();
+
+        expect(active.observed).toBe(false);
+      });
+
+      it("hands the watch back to the stream when a subscriber returns", async () => {
+        const { active, user, calls, store } = setup();
+        const first = store.subscribe(() => {});
+        await tick();
+        first.unsubscribe();
+
+        const values: string[] = [];
+        const second = store.subscribe((v) => values.push(v));
+        await tick();
+        active.next(false);
+        await tick();
+        user.name = "bob";
+        active.next(true);
+        await tick();
+        second.unsubscribe();
+        active.next(false);
+        expect(active.observed).toBe(false);
+
+        expect(values).toEqual(["alice:1", "bob:1"]);
+        expect(calls).toEqual(["alice:1", "bob:1"]);
+      });
     });
 
     it("cancels in-flight pipeValue internal subscription on inactive", async () => {

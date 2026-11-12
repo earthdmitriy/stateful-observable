@@ -3,23 +3,24 @@ import {
   combineLatest,
   defer,
   from,
-  iif,
   isObservable,
-  map,
   Observable,
-  ObservableInput,
   of,
+  Subscription,
   switchMap,
   tap,
 } from "rxjs";
 import { createCache, toCacheKey } from "./cache";
 import { fillStatefulObservable } from "./fillStatefulObservable";
-import { catchResponseError, loadingUnlessSync } from "./operators";
-import { inactiveSymbol, serializeResponse } from "./response-container";
+import {
+  catchResponseError,
+  loadingUnlessSync,
+  onFirstInactive,
+} from "./operators";
+import { inactiveEvent, serializeResponse } from "./response-container";
 import {
   ParamsWithInput,
   ParamsWithLoader,
-  ResponseInactive,
   StatefulObservable,
   StatefulObservableParams,
 } from "./types";
@@ -106,6 +107,7 @@ const expandInput = <Input, Response, Meta>(
 export const statefulObservable = <Input, Response = Input, Meta = undefined>(
   options: StatefulObservableParams<Input, Response, Meta>,
 ): StatefulObservable<Response, unknown, Meta> => {
+  const expanded = expandInput(options);
   const {
     input,
     active,
@@ -117,7 +119,9 @@ export const statefulObservable = <Input, Response = Input, Meta = undefined>(
     name = "unnamed",
     log,
     refCount = true,
-  } = expandInput(options);
+  } = expanded;
+  // without a `cacheKey` nothing is cached, so there is nothing to drop at logout
+  const hasResultCache = expanded.cacheKey !== undefined;
 
   const source$ = input ?? of(true as Input);
   const cache$ = new BehaviorSubject(createCache<Response>(cacheSize));
@@ -159,22 +163,39 @@ export const statefulObservable = <Input, Response = Input, Meta = undefined>(
     }),
   );
 
+  // While the stream has no subscribers its `active` branch below does not run,
+  // so a logout would leave the previous user's results in the cache. Watch
+  // `active` in that time and drop the cache on the first `false`; the watch
+  // ends then, or when a subscriber returns and the branch takes over.
+  let idleWatch: Subscription | undefined;
+  const stopIdleWatch = () => {
+    idleWatch?.unsubscribe();
+    idleWatch = undefined;
+  };
+  const startIdleWatch = (active$: Observable<boolean>) => {
+    stopIdleWatch();
+    if (!hasResultCache) return;
+    idleWatch = onFirstInactive(active$, resetCache);
+  };
+
   const raw = active
     ? active.pipe(
         switchMap((a) =>
-          iif(
-            () => a,
-            valueOrError$,
-            // Drop cached results when the stream goes inactive (logout): they
-            // may belong to the previous user. Done here, after switchMap has
-            // unsubscribed the active branch, so replacing the cache does not
-            // trigger a reload.
-            defer(() => {
-              resetCache();
-              return of({ state: inactiveSymbol } as ResponseInactive);
-            }),
-          ),
+          a
+            ? valueOrError$
+            : // Drop cached results when the stream goes inactive (logout): they
+              // may belong to the previous user. Done here, after switchMap has
+              // unsubscribed the active branch, so replacing the cache does not
+              // trigger a reload.
+              defer(() => {
+                resetCache();
+                return of(inactiveEvent());
+              }),
         ),
+        tap({
+          subscribe: stopIdleWatch,
+          unsubscribe: () => startIdleWatch(active),
+        }),
       )
     : valueOrError$;
   const internalMeta = [{ errorSubscriptions: 0, refCount }];

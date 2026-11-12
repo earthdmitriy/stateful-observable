@@ -764,3 +764,160 @@ export type PipeErrorOperator = {
     ResponseWithStatus<T, unknown>
   >;
 };
+
+/**
+ * Computes the value of `project` from the response and the value of the
+ * input it was loaded for.
+ */
+export type ProjectCombine<Item, Response, Result> = (
+  response: Response,
+  item: Item,
+) => Result;
+
+/**
+ * Computes the value of `projectMany` from the responses of a list, in list
+ * order, and the items of the list they were loaded for.
+ */
+export type ProjectManyCombine<Item, Response, Result> = (
+  responses: Response[],
+  items: readonly Item[],
+) => Result;
+
+/**
+ * What `statefulObservableFactory` and `statefulObservableBatchFactory` return.
+ */
+export type StatefulObservableFactory<Input, Response> = {
+  /**
+   * Create or retrieve a cached StatefulObservable for the given input.
+   * @param input
+   */
+  get(input: Input): StatefulObservable<Response>;
+  /**
+   * Project an input stream onto the entries of `get`. Every value the input
+   * emits is keyed with `cacheKey` and resolved to the same stream
+   * `get(value)` returns, so streams made with `project` and streams made with
+   * `get` share one entry per key: one request, one state, and a `reload()` on
+   * any of them reloads all of them.
+   *
+   * The returned stream follows its input and switches entries when the key
+   * changes, so two projections are not the same instance (unlike `get`); they
+   * share the entry behind them. The entry is kept according to `refCount` and
+   * `cacheSize`, as for `get`: a key that has loaded is served again without a
+   * request, and a key left while still loading is cancelled and loaded again.
+   *
+   * `reload()` on the returned stream reloads the entry it currently shows.
+   *
+   * Options (all optional; `key` is required when the values are not inputs):
+   * - `key` selects the input of a value, so a stream of records can be
+   *   projected by one of their fields. Values are compared by their keys.
+   * - `combine(response, value)` computes the value from the response and the
+   *   value it was loaded for, so data that is not part of the key never meets
+   *   the response of another key. A value with the same key as the current
+   *   one does not load anything: `combine` runs again with the new value and
+   *   the current response. Without `combine` the value is the response. A
+   *   throw in `combine` becomes an error event.
+   *
+   * A value with the same key as the current one is not shown again.
+   * @param input
+   * @param options
+   */
+  project(
+    input: Observable<Input>,
+    options?: {
+      readonly key?: (item: Input) => Input;
+      readonly combine?: undefined;
+    },
+  ): StatefulObservable<Response>;
+  project<Item>(
+    input: Observable<Item>,
+    options: {
+      readonly key: (item: Item) => Input;
+      readonly combine?: undefined;
+    },
+  ): StatefulObservable<Response>;
+  project<Result>(
+    input: Observable<Input>,
+    options: {
+      readonly key?: (item: Input) => Input;
+      readonly combine: ProjectCombine<Input, Response, Result>;
+    },
+  ): StatefulObservable<Result>;
+  project<Item, Result>(
+    input: Observable<Item>,
+    options: {
+      readonly key: (item: Item) => Input;
+      readonly combine: ProjectCombine<Item, Response, Result>;
+    },
+  ): StatefulObservable<Result>;
+  /**
+   * Project a stream of input lists onto the entries of `get`. For every list
+   * the input emits, each item is resolved to `get(item)` and the entries are
+   * combined as with `combineStatefulObservables`: the value is the list of
+   * their values in input order (duplicates included), the stream is pending
+   * while any entry loads, and an error is a list of `error | false`, one per
+   * item. An empty list emits `[]` at once.
+   *
+   * When the list changes, the new entries are subscribed before the previous
+   * ones are released, so an item that stays in the list keeps its load in
+   * flight (no second request, and with the batch factory no second batch). An
+   * item that left the list is released as for `get`. A list with the same keys
+   * in the same order as the current one is skipped. The factory's
+   * `mapOperator` is not used here.
+   *
+   * `reload(options)` reloads the current combination: `onlyFailed` reloads
+   * the failed items, `path: [i]` the item at position `i`.
+   *
+   * Options (all optional; `key` is required when the items are not inputs):
+   * - `key` selects the input of an item, so a list of records
+   *   (`{ sku, qty }`) can be projected by one of their fields. Items are
+   *   compared by their keys.
+   * - `combine(responses, items)` computes the value from the responses and
+   *   the list they were loaded for, so data that is not part of the key
+   *   (`qty`) never meets responses of another list. A list with the same
+   *   keys but other items does not load anything: `combine` runs again with
+   *   the new items and the current responses. Without `combine` the value is
+   *   the responses. A throw in `combine` becomes an error event.
+   * @param input
+   * @param options
+   */
+  projectMany(
+    input: Observable<readonly Input[]>,
+    options?: {
+      readonly key?: (item: Input) => Input;
+      readonly combine?: undefined;
+    },
+  ): StatefulObservable<Response[]>;
+  projectMany<Item>(
+    input: Observable<readonly Item[]>,
+    options: {
+      readonly key: (item: Item) => Input;
+      readonly combine?: undefined;
+    },
+  ): StatefulObservable<Response[]>;
+  projectMany<Result>(
+    input: Observable<readonly Input[]>,
+    options: {
+      readonly key?: (item: Input) => Input;
+      readonly combine: ProjectManyCombine<Input, Response, Result>;
+    },
+  ): StatefulObservable<Result>;
+  projectMany<Item, Result>(
+    input: Observable<readonly Item[]>,
+    options: {
+      readonly key: (item: Item) => Input;
+      readonly combine: ProjectManyCombine<Item, Response, Result>;
+    },
+  ): StatefulObservable<Result>;
+  /**
+   * Reset the cache. If `force` is true, all cached entries will be reset and
+   * streams made with `get` or `project` complete. If `force` is false, only
+   * entries with no active subscribers will be reset.
+   * @param force
+   */
+  reset(force: boolean): void;
+  /**
+   * Reload all cached StatefulObservables by invoking their loader functions again.
+   * Streams made with `project` show these entries, so they reload with them.
+   */
+  reload(): void;
+};
