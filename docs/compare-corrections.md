@@ -42,7 +42,7 @@ Most corrections in favour of the library are in E and F, and most of those came
 
 - **B1. Interop errors** *(self-review · against)*. "Interop only loses the state information" → a probe showed that through RxJS (`combineLatest([from(stream)])`) the first error event ends the consumer's stream, `firstValueFrom` rejects, and an object observer receives `error` and then further `next` calls.
 - **B2. Errors reported to `ErrorHandler`** *(self-review · against)*. The caveat that `| async` on the stream reports each error event to Angular's `ErrorHandler` moved from the signals chapter into the library's own problems.
-- **B3. Operators in pipes** *(reader review · against)*. Limits documented only in the ADR are now in the comparison: a value dropped inside a pipe leaves the node pending (with the boundary explained), operator state restarts after an error, roots never complete.
+- **B3. Operators in pipes** *(reader review · against)*. Limits documented only in the ADR are now in the comparison: a value dropped inside a pipe leaves the node pending (with the boundary explained), and operator state restarts after an error.
 
 ## C. Factual errors about a tool
 
