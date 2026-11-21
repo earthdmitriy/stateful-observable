@@ -124,6 +124,11 @@ No more dead observables after an error — statefulObservable will handle the n
 
 See https://github.com/earthdmitriy/stateful-observable/blob/main/docs/recipes.md
 
+## Articles
+
+- [Stateful Observable: loading, errors and combined data in RxJS without the boilerplate](https://github.com/earthdmitriy/stateful-observable/blob/main/docs/articles/stateful-observable.md): what the library solves and how, from the first `tap(() => this.loading = true)` to a dataflow graph you can recover from any node
+- [Same page, four data layers: RxJS vs Stateful Observable vs Signals vs NgRx SignalStore](https://github.com/earthdmitriy/stateful-observable/blob/main/docs/articles/four-data-layers.md): one complex page built four ways and judged by the same test suite
+
 ## API Reference
 
 ### `statefulObservable(options)`
